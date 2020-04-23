@@ -11,96 +11,161 @@
 
 namespace Symfony\Component\Validator\Constraints;
 
-use Symfony\Component\Validator\Constraint;
-use Symfony\Component\Validator\ConstraintValidator;
-use Symfony\Component\Validator\Exception\ConstraintDefinitionException;
-use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 use Symfony\Component\HttpFoundation\File\File as FileObject;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Symfony\Component\Validator\Constraint;
+use Symfony\Component\Validator\ConstraintValidator;
+use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class FileValidator extends ConstraintValidator
 {
+    const KB_BYTES = 1000;
+    const MB_BYTES = 1000000;
+    const KIB_BYTES = 1024;
+    const MIB_BYTES = 1048576;
+
+    private static $suffices = [
+        1 => 'bytes',
+        self::KB_BYTES => 'kB',
+        self::MB_BYTES => 'MB',
+        self::KIB_BYTES => 'KiB',
+        self::MIB_BYTES => 'MiB',
+    ];
+
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($value, Constraint $constraint)
+    public function validate($value, Constraint $constraint)
     {
+        if (!$constraint instanceof File) {
+            throw new UnexpectedTypeException($constraint, File::class);
+        }
+
         if (null === $value || '' === $value) {
-            return true;
+            return;
         }
 
         if ($value instanceof UploadedFile && !$value->isValid()) {
             switch ($value->getError()) {
                 case UPLOAD_ERR_INI_SIZE:
-                    $maxSize = UploadedFile::getMaxFilesize();
-                    $maxSize = $constraint->maxSize ? min($maxSize, $constraint->maxSize) : $maxSize;
-                    $this->setMessage($constraint->uploadIniSizeErrorMessage, array('{{ limit }}' => $maxSize.' bytes'));
+                    $iniLimitSize = UploadedFile::getMaxFilesize();
+                    if ($constraint->maxSize && $constraint->maxSize < $iniLimitSize) {
+                        $limitInBytes = $constraint->maxSize;
+                        $binaryFormat = $constraint->binaryFormat;
+                    } else {
+                        $limitInBytes = $iniLimitSize;
+                        $binaryFormat = null === $constraint->binaryFormat ? true : $constraint->binaryFormat;
+                    }
 
-                    return false;
+                    list(, $limitAsString, $suffix) = $this->factorizeSizes(0, $limitInBytes, $binaryFormat);
+                    $this->context->buildViolation($constraint->uploadIniSizeErrorMessage)
+                        ->setParameter('{{ limit }}', $limitAsString)
+                        ->setParameter('{{ suffix }}', $suffix)
+                        ->setCode((string) UPLOAD_ERR_INI_SIZE)
+                        ->addViolation();
+
+                    return;
                 case UPLOAD_ERR_FORM_SIZE:
-                    $this->setMessage($constraint->uploadFormSizeErrorMessage);
+                    $this->context->buildViolation($constraint->uploadFormSizeErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_FORM_SIZE)
+                        ->addViolation();
 
-                    return false;
+                    return;
+                case UPLOAD_ERR_PARTIAL:
+                    $this->context->buildViolation($constraint->uploadPartialErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_PARTIAL)
+                        ->addViolation();
+
+                    return;
+                case UPLOAD_ERR_NO_FILE:
+                    $this->context->buildViolation($constraint->uploadNoFileErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_NO_FILE)
+                        ->addViolation();
+
+                    return;
+                case UPLOAD_ERR_NO_TMP_DIR:
+                    $this->context->buildViolation($constraint->uploadNoTmpDirErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_NO_TMP_DIR)
+                        ->addViolation();
+
+                    return;
+                case UPLOAD_ERR_CANT_WRITE:
+                    $this->context->buildViolation($constraint->uploadCantWriteErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_CANT_WRITE)
+                        ->addViolation();
+
+                    return;
+                case UPLOAD_ERR_EXTENSION:
+                    $this->context->buildViolation($constraint->uploadExtensionErrorMessage)
+                        ->setCode((string) UPLOAD_ERR_EXTENSION)
+                        ->addViolation();
+
+                    return;
                 default:
-                    $this->setMessage($constraint->uploadErrorMessage);
+                    $this->context->buildViolation($constraint->uploadErrorMessage)
+                        ->setCode((string) $value->getError())
+                        ->addViolation();
 
-                    return false;
+                    return;
             }
         }
 
-        if (!is_scalar($value) && !$value instanceof FileObject && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!is_scalar($value) && !$value instanceof FileObject && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
         $path = $value instanceof FileObject ? $value->getPathname() : (string) $value;
 
-        if (!file_exists($path)) {
-            $this->setMessage($constraint->notFoundMessage, array('{{ file }}' => $path));
+        if (!is_file($path)) {
+            $this->context->buildViolation($constraint->notFoundMessage)
+                ->setParameter('{{ file }}', $this->formatValue($path))
+                ->setCode(File::NOT_FOUND_ERROR)
+                ->addViolation();
 
-            return false;
+            return;
         }
 
         if (!is_readable($path)) {
-            $this->setMessage($constraint->notReadableMessage, array('{{ file }}' => $path));
+            $this->context->buildViolation($constraint->notReadableMessage)
+                ->setParameter('{{ file }}', $this->formatValue($path))
+                ->setCode(File::NOT_READABLE_ERROR)
+                ->addViolation();
 
-            return false;
+            return;
+        }
+
+        $sizeInBytes = filesize($path);
+        $basename = $value instanceof UploadedFile ? $value->getClientOriginalName() : basename($path);
+
+        if (0 === $sizeInBytes) {
+            $this->context->buildViolation($constraint->disallowEmptyMessage)
+                ->setParameter('{{ file }}', $this->formatValue($path))
+                ->setParameter('{{ name }}', $this->formatValue($basename))
+                ->setCode(File::EMPTY_ERROR)
+                ->addViolation();
+
+            return;
         }
 
         if ($constraint->maxSize) {
-            if (ctype_digit((string) $constraint->maxSize)) {
-                $size = filesize($path);
-                $limit = $constraint->maxSize;
-                $suffix = ' bytes';
-            } else if (preg_match('/^(\d+)k$/', $constraint->maxSize, $matches)) {
-                $size = round(filesize($path) / 1000, 2);
-                $limit = $matches[1];
-                $suffix = ' kB';
-            } else if (preg_match('/^(\d+)M$/', $constraint->maxSize, $matches)) {
-                $size = round(filesize($path) / 1000000, 2);
-                $limit = $matches[1];
-                $suffix = ' MB';
-            } else {
-                throw new ConstraintDefinitionException(sprintf('"%s" is not a valid maximum size', $constraint->maxSize));
-            }
+            $limitInBytes = $constraint->maxSize;
 
-            if ($size > $limit) {
-                $this->setMessage($constraint->maxSizeMessage, array(
-                    '{{ size }}'    => $size.$suffix,
-                    '{{ limit }}'   => $limit.$suffix,
-                    '{{ file }}'    => $path,
-                ));
+            if ($sizeInBytes > $limitInBytes) {
+                list($sizeAsString, $limitAsString, $suffix) = $this->factorizeSizes($sizeInBytes, $limitInBytes, $constraint->binaryFormat);
+                $this->context->buildViolation($constraint->maxSizeMessage)
+                    ->setParameter('{{ file }}', $this->formatValue($path))
+                    ->setParameter('{{ size }}', $sizeAsString)
+                    ->setParameter('{{ limit }}', $limitAsString)
+                    ->setParameter('{{ suffix }}', $suffix)
+                    ->setParameter('{{ name }}', $this->formatValue($basename))
+                    ->setCode(File::TOO_LARGE_ERROR)
+                    ->addViolation();
 
-                return false;
+                return;
             }
         }
 
@@ -109,17 +174,70 @@ class FileValidator extends ConstraintValidator
                 $value = new FileObject($value);
             }
 
-            if (!in_array($value->getMimeType(), (array) $constraint->mimeTypes)) {
-                $this->setMessage($constraint->mimeTypesMessage, array(
-                    '{{ type }}'    => '"'.$value->getMimeType().'"',
-                    '{{ types }}'   => '"'.implode('", "', (array) $constraint->mimeTypes).'"',
-                    '{{ file }}'    => $path,
-                ));
+            $mimeTypes = (array) $constraint->mimeTypes;
+            $mime = $value->getMimeType();
 
-                return false;
+            foreach ($mimeTypes as $mimeType) {
+                if ($mimeType === $mime) {
+                    return;
+                }
+
+                if ($discrete = strstr($mimeType, '/*', true)) {
+                    if (strstr($mime, '/', true) === $discrete) {
+                        return;
+                    }
+                }
             }
+
+            $this->context->buildViolation($constraint->mimeTypesMessage)
+                ->setParameter('{{ file }}', $this->formatValue($path))
+                ->setParameter('{{ type }}', $this->formatValue($mime))
+                ->setParameter('{{ types }}', $this->formatValues($mimeTypes))
+                ->setParameter('{{ name }}', $this->formatValue($basename))
+                ->setCode(File::INVALID_MIME_TYPE_ERROR)
+                ->addViolation();
+        }
+    }
+
+    private static function moreDecimalsThan(string $double, int $numberOfDecimals): bool
+    {
+        return \strlen($double) > \strlen(round($double, $numberOfDecimals));
+    }
+
+    /**
+     * Convert the limit to the smallest possible number
+     * (i.e. try "MB", then "kB", then "bytes").
+     */
+    private function factorizeSizes(int $size, int $limit, bool $binaryFormat): array
+    {
+        if ($binaryFormat) {
+            $coef = self::MIB_BYTES;
+            $coefFactor = self::KIB_BYTES;
+        } else {
+            $coef = self::MB_BYTES;
+            $coefFactor = self::KB_BYTES;
         }
 
-        return true;
+        $limitAsString = (string) ($limit / $coef);
+
+        // Restrict the limit to 2 decimals (without rounding! we
+        // need the precise value)
+        while (self::moreDecimalsThan($limitAsString, 2)) {
+            $coef /= $coefFactor;
+            $limitAsString = (string) ($limit / $coef);
+        }
+
+        // Convert size to the same measure, but round to 2 decimals
+        $sizeAsString = (string) round($size / $coef, 2);
+
+        // If the size and limit produce the same string output
+        // (due to rounding), reduce the coefficient
+        while ($sizeAsString === $limitAsString) {
+            $coef /= $coefFactor;
+            $limitAsString = (string) ($limit / $coef);
+            $sizeAsString = (string) round($size / $coef, 2);
+        }
+
+        return [$sizeAsString, $limitAsString, self::$suffices[$coef]];
     }
 }

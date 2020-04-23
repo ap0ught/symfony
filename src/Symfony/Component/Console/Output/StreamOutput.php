@@ -11,50 +11,44 @@
 
 namespace Symfony\Component\Console\Output;
 
-use Symfony\Component\Console\Formatter\OutputFormatter;
+use Symfony\Component\Console\Exception\InvalidArgumentException;
+use Symfony\Component\Console\Formatter\OutputFormatterInterface;
 
 /**
  * StreamOutput writes the output to a given stream.
  *
  * Usage:
  *
- * $output = new StreamOutput(fopen('php://stdout', 'w'));
+ *     $output = new StreamOutput(fopen('php://stdout', 'w'));
  *
  * As `StreamOutput` can use any stream, you can also use a file:
  *
- * $output = new StreamOutput(fopen('/path/to/output.log', 'a', false));
+ *     $output = new StreamOutput(fopen('/path/to/output.log', 'a', false));
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 class StreamOutput extends Output
 {
     private $stream;
 
     /**
-     * Constructor.
+     * @param resource                      $stream    A stream resource
+     * @param int                           $verbosity The verbosity level (one of the VERBOSITY constants in OutputInterface)
+     * @param bool|null                     $decorated Whether to decorate messages (null for auto-guessing)
+     * @param OutputFormatterInterface|null $formatter Output formatter instance (null to use default OutputFormatter)
      *
-     * @param mixed           $stream    A stream resource
-     * @param integer         $verbosity The verbosity level (self::VERBOSITY_QUIET, self::VERBOSITY_NORMAL,
-     *                                   self::VERBOSITY_VERBOSE)
-     * @param Boolean         $decorated Whether to decorate messages or not (null for auto-guessing)
-     * @param OutputFormatter $formatter Output formatter instance
-     *
-     * @throws \InvalidArgumentException When first argument is not a real stream
-     *
-     * @api
+     * @throws InvalidArgumentException When first argument is not a real stream
      */
-    public function __construct($stream, $verbosity = self::VERBOSITY_NORMAL, $decorated = null, OutputFormatter $formatter = null)
+    public function __construct($stream, int $verbosity = self::VERBOSITY_NORMAL, bool $decorated = null, OutputFormatterInterface $formatter = null)
     {
-        if (!is_resource($stream) || 'stream' !== get_resource_type($stream)) {
-            throw new \InvalidArgumentException('The StreamOutput class needs a stream as its first argument.');
+        if (!\is_resource($stream) || 'stream' !== get_resource_type($stream)) {
+            throw new InvalidArgumentException('The StreamOutput class needs a stream as its first argument.');
         }
 
         $this->stream = $stream;
 
         if (null === $decorated) {
-            $decorated = $this->hasColorSupport($decorated);
+            $decorated = $this->hasColorSupport();
         }
 
         parent::__construct($verbosity, $decorated, $formatter);
@@ -71,21 +65,15 @@ class StreamOutput extends Output
     }
 
     /**
-     * Writes a message to the output.
-     *
-     * @param string  $message A message to write to the output
-     * @param Boolean $newline Whether to add a newline or not
-     *
-     * @throws \RuntimeException When unable to write output (should never happen)
+     * {@inheritdoc}
      */
-    public function doWrite($message, $newline)
+    protected function doWrite(string $message, bool $newline)
     {
-        if (false === @fwrite($this->stream, $message.($newline ? PHP_EOL : ''))) {
-            // @codeCoverageIgnoreStart
-            // should never happen
-            throw new \RuntimeException('Unable to write output.');
-            // @codeCoverageIgnoreEnd
+        if ($newline) {
+            $message .= PHP_EOL;
         }
+
+        @fwrite($this->stream, $message);
 
         fflush($this->stream);
     }
@@ -95,19 +83,33 @@ class StreamOutput extends Output
      *
      * Colorization is disabled if not supported by the stream:
      *
-     *  -  windows without ansicon
-     *  -  non tty consoles
+     * This is tricky on Windows, because Cygwin, Msys2 etc emulate pseudo
+     * terminals via named pipes, so we can only check the environment.
      *
-     * @return Boolean true if the stream supports colorization, false otherwise
+     * Reference: Composer\XdebugHandler\Process::supportsColor
+     * https://github.com/composer/xdebug-handler
+     *
+     * @return bool true if the stream supports colorization, false otherwise
      */
     protected function hasColorSupport()
     {
-        // @codeCoverageIgnoreStart
-        if (DIRECTORY_SEPARATOR == '\\') {
-            return false !== getenv('ANSICON');
+        // Follow https://no-color.org/
+        if (isset($_SERVER['NO_COLOR']) || false !== getenv('NO_COLOR')) {
+            return false;
         }
 
-        return function_exists('posix_isatty') && @posix_isatty($this->stream);
-        // @codeCoverageIgnoreEnd
+        if ('Hyper' === getenv('TERM_PROGRAM')) {
+            return true;
+        }
+
+        if (\DIRECTORY_SEPARATOR === '\\') {
+            return (\function_exists('sapi_windows_vt100_support')
+                && @sapi_windows_vt100_support($this->stream))
+                || false !== getenv('ANSICON')
+                || 'ON' === getenv('ConEmuANSI')
+                || 'xterm' === getenv('TERM');
+        }
+
+        return stream_isatty($this->stream);
     }
 }

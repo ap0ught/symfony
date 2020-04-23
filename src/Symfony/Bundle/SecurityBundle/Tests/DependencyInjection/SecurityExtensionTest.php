@@ -11,170 +11,429 @@
 
 namespace Symfony\Bundle\SecurityBundle\Tests\DependencyInjection;
 
-use Symfony\Component\DependencyInjection\Reference;
-
-use Symfony\Component\DependencyInjection\Parameter;
-
+use PHPUnit\Framework\TestCase;
+use Symfony\Bundle\FrameworkBundle\DependencyInjection\FrameworkExtension;
 use Symfony\Bundle\SecurityBundle\DependencyInjection\SecurityExtension;
+use Symfony\Bundle\SecurityBundle\SecurityBundle;
+use Symfony\Bundle\SecurityBundle\Tests\DependencyInjection\Fixtures\UserProvider\DummyProvider;
+use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\ExpressionLanguage\Expression;
+use Symfony\Component\Security\Core\User\UserProviderInterface;
 
-abstract class SecurityExtensionTest extends \PHPUnit_Framework_TestCase
+class SecurityExtensionTest extends TestCase
 {
-    abstract protected function loadFromFile(ContainerBuilder $container, $file);
-
-    public function testRolesHierarchy()
+    public function testInvalidCheckPath()
     {
-        $container = $this->getContainer('container1');
-        $this->assertEquals(array(
-            'ROLE_ADMIN'       => array('ROLE_USER'),
-            'ROLE_SUPER_ADMIN' => array('ROLE_USER', 'ROLE_ADMIN', 'ROLE_ALLOWED_TO_SWITCH'),
-            'ROLE_REMOTE'      => array('ROLE_USER', 'ROLE_ADMIN'),
-        ), $container->getParameter('security.role_hierarchy.roles'));
+        $this->expectException('Symfony\Component\Config\Definition\Exception\InvalidConfigurationException');
+        $this->expectExceptionMessage('The check_path "/some_area/login_check" for login method "form_login" is not matched by the firewall pattern "/secured_area/.*".');
+        $container = $this->getRawContainer();
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/secured_area/.*',
+                    'form_login' => [
+                        'check_path' => '/some_area/login_check',
+                    ],
+                ],
+            ],
+        ]);
+
+        $container->compile();
     }
 
-    public function testUserProviders()
+    public function testFirewallWithoutAuthenticationListener()
     {
-        $container = $this->getContainer('container1');
+        $this->expectException('Symfony\Component\Config\Definition\Exception\InvalidConfigurationException');
+        $this->expectExceptionMessage('No authentication listener registered for firewall "some_firewall"');
+        $container = $this->getRawContainer();
 
-        $providers = array_values(array_filter($container->getServiceIds(), function ($key) { return 0 === strpos($key, 'security.user.provider.concrete'); }));
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
 
-        $expectedProviders = array(
-            'security.user.provider.concrete.default',
-            'security.user.provider.concrete.default_foo',
-            'security.user.provider.concrete.digest',
-            'security.user.provider.concrete.digest_foo',
-            'security.user.provider.concrete.basic',
-            'security.user.provider.concrete.basic_foo',
-            'security.user.provider.concrete.basic_bar',
-            'security.user.provider.concrete.doctrine',
-            'security.user.provider.concrete.service',
-            'security.user.provider.concrete.chain',
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                ],
+            ],
+        ]);
+
+        $container->compile();
+    }
+
+    public function testFirewallWithInvalidUserProvider()
+    {
+        $this->expectException('Symfony\Component\Config\Definition\Exception\InvalidConfigurationException');
+        $this->expectExceptionMessage('Unable to create definition for "security.user.provider.concrete.my_foo" user provider');
+        $container = $this->getRawContainer();
+
+        $extension = $container->getExtension('security');
+        $extension->addUserProviderFactory(new DummyProvider());
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'my_foo' => ['foo' => []],
+            ],
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => [],
+                ],
+            ],
+        ]);
+
+        $container->compile();
+    }
+
+    public function testDisableRoleHierarchyVoter()
+    {
+        $container = $this->getRawContainer();
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+
+            'role_hierarchy' => null,
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => null,
+                ],
+            ],
+        ]);
+
+        $container->compile();
+
+        $this->assertFalse($container->hasDefinition('security.access.role_hierarchy_voter'));
+    }
+
+    public function testGuardHandlerIsPassedStatelessFirewalls()
+    {
+        $container = $this->getRawContainer();
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '^/admin',
+                    'http_basic' => null,
+                ],
+                'stateless_firewall' => [
+                    'pattern' => '/.*',
+                    'stateless' => true,
+                    'http_basic' => null,
+                ],
+            ],
+        ]);
+
+        $container->compile();
+        $definition = $container->getDefinition('security.authentication.guard_handler');
+        $this->assertSame(['stateless_firewall'], $definition->getArgument(2));
+    }
+
+    public function testSwitchUserNotStatelessOnStatelessFirewall()
+    {
+        $container = $this->getRawContainer();
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'stateless' => true,
+                    'http_basic' => null,
+                    'switch_user' => true,
+                ],
+            ],
+        ]);
+
+        $container->compile();
+
+        $this->assertTrue($container->getDefinition('security.authentication.switchuser_listener.some_firewall')->getArgument(9));
+    }
+
+    public function testPerListenerProvider()
+    {
+        $container = $this->getRawContainer();
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'first' => ['id' => 'foo'],
+                'second' => ['id' => 'bar'],
+            ],
+
+            'firewalls' => [
+                'default' => [
+                    'http_basic' => ['provider' => 'second'],
+                ],
+            ],
+        ]);
+
+        $container->compile();
+        $this->addToAssertionCount(1);
+    }
+
+    public function testMissingProviderForListener()
+    {
+        $this->expectException('Symfony\Component\Config\Definition\Exception\InvalidConfigurationException');
+        $this->expectExceptionMessage('Not configuring explicitly the provider for the "http_basic" listener on "ambiguous" firewall is ambiguous as there is more than one registered provider.');
+        $container = $this->getRawContainer();
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'first' => ['id' => 'foo'],
+                'second' => ['id' => 'bar'],
+            ],
+
+            'firewalls' => [
+                'ambiguous' => [
+                    'http_basic' => true,
+                    'form_login' => ['provider' => 'second'],
+                ],
+            ],
+        ]);
+
+        $container->compile();
+    }
+
+    public function testPerListenerProviderWithRememberMeAndAnonymous()
+    {
+        $container = $this->getRawContainer();
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'first' => ['id' => 'foo'],
+                'second' => ['id' => 'bar'],
+            ],
+
+            'firewalls' => [
+                'default' => [
+                    'form_login' => ['provider' => 'second'],
+                    'remember_me' => ['secret' => 'baz'],
+                    'anonymous' => true,
+                ],
+            ],
+        ]);
+
+        $container->compile();
+        $this->addToAssertionCount(1);
+    }
+
+    public function testRegisterRequestMatchersWithAllowIfExpression()
+    {
+        $container = $this->getRawContainer();
+
+        $rawExpression = "'foo' == 'bar' or 1 in [1, 3, 3]";
+
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => [],
+                ],
+            ],
+            'access_control' => [
+                ['path' => '/', 'allow_if' => $rawExpression],
+            ],
+        ]);
+
+        $container->compile();
+        $accessMap = $container->getDefinition('security.access_map');
+        $this->assertCount(1, $accessMap->getMethodCalls());
+        $call = $accessMap->getMethodCalls()[0];
+        $this->assertSame('add', $call[0]);
+        $args = $call[1];
+        $this->assertCount(3, $args);
+        $expressionId = $args[1][0];
+        $this->assertTrue($container->hasDefinition($expressionId));
+        $expressionDef = $container->getDefinition($expressionId);
+        $this->assertSame(Expression::class, $expressionDef->getClass());
+        $this->assertSame($rawExpression, $expressionDef->getArgument(0));
+
+        $this->assertTrue($container->hasDefinition('security.cache_warmer.expression'));
+        $this->assertEquals(
+            new IteratorArgument([new Reference($expressionId)]),
+            $container->getDefinition('security.cache_warmer.expression')->getArgument(0)
         );
-
-        $this->assertEquals(array(), array_diff($expectedProviders, $providers));
-        $this->assertEquals(array(), array_diff($providers, $expectedProviders));
-
-        // chain provider
-        $this->assertEquals(array(array(
-            new Reference('security.user.provider.concrete.service'),
-            new Reference('security.user.provider.concrete.doctrine'),
-            new Reference('security.user.provider.concrete.basic'),
-        )), $container->getDefinition('security.user.provider.concrete.chain')->getArguments());
     }
 
-    public function testFirewalls()
+    public function testRemovesExpressionCacheWarmerDefinitionIfNoExpressions()
     {
-        $container = $this->getContainer('container1');
+        $container = $this->getRawContainer();
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => [],
+                ],
+            ],
+        ]);
+        $container->compile();
 
-        $arguments = $container->getDefinition('security.firewall.map')->getArguments();
-        $listeners = array();
-        foreach (array_keys($arguments[1]) as $contextId) {
-            $contextDef = $container->getDefinition($contextId);
-            $arguments = $contextDef->getArguments();
-            $listeners[] = array_map(function ($ref) { return (string) $ref; }, $arguments['index_0']);
-        }
-
-        $this->assertEquals(array(
-            array(),
-            array(
-                'security.channel_listener',
-                'security.logout_listener.secure',
-                'security.authentication.listener.x509.secure',
-                'security.authentication.listener.form.secure',
-                'security.authentication.listener.basic.secure',
-                'security.authentication.listener.digest.secure',
-                'security.authentication.listener.anonymous.secure',
-                'security.access_listener',
-                'security.authentication.switchuser_listener.secure',
-            ),
-        ), $listeners);
+        $this->assertFalse($container->hasDefinition('security.cache_warmer.expression'));
     }
 
-    public function testAccess()
+    public function testRegisterTheUserProviderAlias()
     {
-        $container = $this->getContainer('container1');
+        $container = $this->getRawContainer();
 
-        $rules = array();
-        foreach ($container->getDefinition('security.access_map')->getMethodCalls() as $call) {
-            if ($call[0] == 'add') {
-                $rules[] = array((string) $call[1][0], $call[1][1], $call[1][2]);
-            }
-        }
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'default' => ['id' => 'foo'],
+            ],
 
-        $matcherIds = array();
-        foreach ($rules as $rule) {
-            list($matcherId, $roles, $channel) = $rule;
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => null,
+                ],
+            ],
+        ]);
 
-            $this->assertFalse(isset($matcherIds[$matcherId]));
-            $matcherIds[$matcherId] = true;
+        $container->compile();
 
-            $i = count($matcherIds);
-            if (1 === $i) {
-                $this->assertEquals(array('ROLE_USER'), $roles);
-                $this->assertEquals('https', $channel);
-            } else if (2 === $i) {
-                $this->assertEquals(array('IS_AUTHENTICATED_ANONYMOUSLY'), $roles);
-                $this->assertNull($channel);
-            }
-        }
+        $this->assertTrue($container->hasAlias(UserProviderInterface::class));
     }
 
-    public function testMerge()
+    public function testDoNotRegisterTheUserProviderAliasWithMultipleProviders()
     {
-        $container = $this->getContainer('merge');
+        $container = $this->getRawContainer();
 
-        $this->assertEquals(array(
-            'FOO' => array('MOO'),
-            'ADMIN' => array('USER'),
-        ), $container->getParameter('security.role_hierarchy.roles'));
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'first' => ['id' => 'foo'],
+                'second' => ['id' => 'bar'],
+            ],
+
+            'firewalls' => [
+                'some_firewall' => [
+                    'pattern' => '/.*',
+                    'http_basic' => ['provider' => 'second'],
+                ],
+            ],
+        ]);
+
+        $container->compile();
+
+        $this->assertFalse($container->has(UserProviderInterface::class));
     }
 
-    public function testEncoders()
+    /**
+     * @dataProvider sessionConfigurationProvider
+     */
+    public function testRememberMeCookieInheritFrameworkSessionCookie($config, $samesite, $secure)
     {
-        $container = $this->getContainer('container1');
+        $container = $this->getRawContainer();
 
-        $this->assertEquals(array(array(
-            'JMS\FooBundle\Entity\User1' => array(
-                'class' => new Parameter('security.encoder.plain.class'),
-                'arguments' => array(false),
-            ),
-            'JMS\FooBundle\Entity\User2' => array(
-                'class' => new Parameter('security.encoder.digest.class'),
-                'arguments' => array('sha1', false, 5),
-            ),
-            'JMS\FooBundle\Entity\User3' => array(
-                'class' => new Parameter('security.encoder.digest.class'),
-                'arguments' => array('md5', true, 5000),
-            ),
-            'JMS\FooBundle\Entity\User4' => new Reference('security.encoder.foo'),
-        )), $container->getDefinition('security.encoder_factory.generic')->getArguments());
+        $container->registerExtension(new FrameworkExtension());
+        $container->setParameter('kernel.bundles_metadata', []);
+        $container->setParameter('kernel.project_dir', __DIR__);
+        $container->setParameter('kernel.cache_dir', __DIR__);
+
+        $container->loadFromExtension('security', [
+            'firewalls' => [
+                'default' => [
+                    'form_login' => null,
+                    'remember_me' => ['secret' => 'baz'],
+                ],
+            ],
+        ]);
+        $container->loadFromExtension('framework', [
+            'session' => $config,
+        ]);
+
+        $container->compile();
+
+        $definition = $container->getDefinition('security.authentication.rememberme.services.simplehash.default');
+
+        $this->assertEquals($samesite, $definition->getArgument(3)['samesite']);
+        $this->assertEquals($secure, $definition->getArgument(3)['secure']);
     }
 
-    public function testAcl()
+    public function sessionConfigurationProvider()
     {
-        $container = $this->getContainer('container1');
-
-        $this->assertTrue($container->hasDefinition('security.acl.dbal.provider'));
-        $this->assertEquals('security.acl.dbal.provider', (string) $container->getAlias('security.acl.provider'));
+        return [
+            [
+                false,
+                null,
+                false,
+            ],
+            [
+                [
+                    'cookie_secure' => true,
+                    'cookie_samesite' => 'lax',
+                    'save_path' => null,
+                ],
+                'lax',
+                true,
+            ],
+        ];
     }
 
-    public function testCustomAclProvider()
+    public function testSwitchUserWithSeveralDefinedProvidersButNoFirewallRootProviderConfigured()
     {
-        $container = $this->getContainer('custom_acl_provider');
+        $container = $this->getRawContainer();
+        $container->loadFromExtension('security', [
+            'providers' => [
+                'first' => ['id' => 'foo'],
+                'second' => ['id' => 'bar'],
+            ],
 
-        $this->assertFalse($container->hasDefinition('security.acl.dbal.provider'));
-        $this->assertEquals('foo', (string) $container->getAlias('security.acl.provider'));
+            'firewalls' => [
+                'foobar' => [
+                    'switch_user' => [
+                        'provider' => 'second',
+                    ],
+                    'anonymous' => true,
+                ],
+            ],
+        ]);
+
+        $container->compile();
+
+        $this->assertEquals(new Reference('security.user.provider.concrete.second'), $container->getDefinition('security.authentication.switchuser_listener.foobar')->getArgument(1));
     }
 
-    protected function getContainer($file)
+    protected function getRawContainer()
     {
         $container = new ContainerBuilder();
+        $container->setParameter('kernel.debug', false);
+
         $security = new SecurityExtension();
         $container->registerExtension($security);
-        $this->loadFromFile($container, $file);
 
-        $container->getCompilerPassConfig()->setOptimizationPasses(array());
-        $container->getCompilerPassConfig()->setRemovingPasses(array());
+        $bundle = new SecurityBundle();
+        $bundle->build($container);
+
+        $container->getCompilerPassConfig()->setOptimizationPasses([]);
+        $container->getCompilerPassConfig()->setRemovingPasses([]);
+        $container->getCompilerPassConfig()->setAfterRemovingPasses([]);
+
+        return $container;
+    }
+
+    protected function getContainer()
+    {
+        $container = $this->getRawContainer();
         $container->compile();
 
         return $container;

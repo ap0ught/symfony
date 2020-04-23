@@ -1,17 +1,18 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Bundle\SecurityBundle\Security;
 
 use Symfony\Component\Security\Http\Firewall\ExceptionListener;
+use Symfony\Component\Security\Http\Firewall\LogoutListener;
 
 /**
  * This is a wrapper around the actual firewall configuration which allows us
@@ -23,15 +24,34 @@ class FirewallContext
 {
     private $listeners;
     private $exceptionListener;
+    private $logoutListener;
+    private $config;
 
-    public function __construct(array $listeners, ExceptionListener $exceptionListener = null)
+    public function __construct(iterable $listeners, ExceptionListener $exceptionListener = null, LogoutListener $logoutListener = null, FirewallConfig $config = null)
     {
         $this->listeners = $listeners;
         $this->exceptionListener = $exceptionListener;
+        $this->logoutListener = $logoutListener;
+        $this->config = $config;
     }
 
-    public function getContext()
+    public function getConfig()
     {
-        return array($this->listeners, $this->exceptionListener);
+        return $this->config;
+    }
+
+    public function getListeners(): iterable
+    {
+        return $this->listeners;
+    }
+
+    public function getExceptionListener()
+    {
+        return $this->exceptionListener;
+    }
+
+    public function getLogoutListener()
+    {
+        return $this->logoutListener;
     }
 }

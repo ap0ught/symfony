@@ -12,27 +12,54 @@
 namespace Symfony\Component\Validator\Mapping;
 
 use Symfony\Component\Validator\Constraint;
-use Symfony\Component\Validator\Constraints\Valid;
-use Symfony\Component\Validator\Exception\ValidatorException;
 use Symfony\Component\Validator\Exception\ConstraintDefinitionException;
 
-abstract class MemberMetadata extends ElementMetadata
+/**
+ * Stores all metadata needed for validating a class property.
+ *
+ * The method of accessing the property's value must be specified by subclasses
+ * by implementing the {@link newReflectionMember()} method.
+ *
+ * This class supports serialization and cloning.
+ *
+ * @author Bernhard Schussek <bschussek@gmail.com>
+ *
+ * @see PropertyMetadataInterface
+ */
+abstract class MemberMetadata extends GenericMetadata implements PropertyMetadataInterface
 {
+    /**
+     * @internal This property is public in order to reduce the size of the
+     *           class' serialized representation. Do not access it. Use
+     *           {@link getClassName()} instead.
+     */
     public $class;
-    public $name;
-    public $property;
-    public $cascaded = false;
-    public $collectionCascaded = false;
-    private $reflMember;
 
     /**
-     * Constructor.
-     *
+     * @internal This property is public in order to reduce the size of the
+     *           class' serialized representation. Do not access it. Use
+     *           {@link getName()} instead.
+     */
+    public $name;
+
+    /**
+     * @internal This property is public in order to reduce the size of the
+     *           class' serialized representation. Do not access it. Use
+     *           {@link getPropertyName()} instead.
+     */
+    public $property;
+
+    /**
+     * @var \ReflectionMethod[]|\ReflectionProperty[]
+     */
+    private $reflMember = [];
+
+    /**
      * @param string $class    The name of the class this member is defined on
      * @param string $name     The name of the member
      * @param string $property The property the member belongs to
      */
-    public function __construct($class, $name, $property)
+    public function __construct(string $class, string $name, string $property)
     {
         $this->class = $class;
         $this->name = $name;
@@ -40,44 +67,33 @@ abstract class MemberMetadata extends ElementMetadata
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function addConstraint(Constraint $constraint)
     {
-        if (!in_array(Constraint::PROPERTY_CONSTRAINT, (array) $constraint->getTargets())) {
-            throw new ConstraintDefinitionException(sprintf(
-                'The constraint %s cannot be put on properties or getters',
-                get_class($constraint)
-            ));
+        if (!\in_array(Constraint::PROPERTY_CONSTRAINT, (array) $constraint->getTargets())) {
+            throw new ConstraintDefinitionException(sprintf('The constraint "%s" cannot be put on properties or getters.', get_debug_type($constraint)));
         }
 
-        if ($constraint instanceof Valid) {
-            $this->cascaded = true;
-            $this->collectionCascaded = $constraint->traverse;
-        } else {
-            parent::addConstraint($constraint);
-        }
+        parent::addConstraint($constraint);
 
         return $this;
     }
 
     /**
-     * Returns the names of the properties that should be serialized
-     *
-     * @return array
+     * {@inheritdoc}
      */
     public function __sleep()
     {
-        return array_merge(parent::__sleep(), array(
+        return array_merge(parent::__sleep(), [
             'class',
             'name',
             'property',
-            'cascaded', // TESTME
-        ));
+        ]);
     }
 
     /**
-     * Returns the name of the member
+     * Returns the name of the member.
      *
      * @return string
      */
@@ -87,9 +103,7 @@ abstract class MemberMetadata extends ElementMetadata
     }
 
     /**
-     * Returns the class this member is defined on
-     *
-     * @return string
+     * {@inheritdoc}
      */
     public function getClassName()
     {
@@ -97,9 +111,7 @@ abstract class MemberMetadata extends ElementMetadata
     }
 
     /**
-     * Returns the name of the property this member belongs to
-     *
-     * @return string The property name
+     * {@inheritdoc}
      */
     public function getPropertyName()
     {
@@ -107,83 +119,66 @@ abstract class MemberMetadata extends ElementMetadata
     }
 
     /**
-     * Returns whether this member is public
+     * Returns whether this member is public.
      *
-     * @return Boolean
+     * @param object|string $objectOrClassName The object or the class name
+     *
+     * @return bool
      */
-    public function isPublic()
+    public function isPublic($objectOrClassName)
     {
-        return $this->getReflectionMember()->isPublic();
+        return $this->getReflectionMember($objectOrClassName)->isPublic();
     }
 
     /**
-     * Returns whether this member is protected
+     * Returns whether this member is protected.
      *
-     * @return Boolean
+     * @param object|string $objectOrClassName The object or the class name
+     *
+     * @return bool
      */
-    public function isProtected()
+    public function isProtected($objectOrClassName)
     {
-        return $this->getReflectionMember()->isProtected();
+        return $this->getReflectionMember($objectOrClassName)->isProtected();
     }
 
     /**
-     * Returns whether this member is private
+     * Returns whether this member is private.
      *
-     * @return Boolean
+     * @param object|string $objectOrClassName The object or the class name
+     *
+     * @return bool
      */
-    public function isPrivate()
+    public function isPrivate($objectOrClassName)
     {
-        return $this->getReflectionMember()->isPrivate();
+        return $this->getReflectionMember($objectOrClassName)->isPrivate();
     }
 
     /**
-     * Returns whether objects stored in this member should be validated
+     * Returns the reflection instance for accessing the member's value.
      *
-     * @return Boolean
+     * @param object|string $objectOrClassName The object or the class name
+     *
+     * @return \ReflectionMethod|\ReflectionProperty The reflection instance
      */
-    public function isCascaded()
+    public function getReflectionMember($objectOrClassName)
     {
-        return $this->cascaded;
-    }
-
-    /**
-     * Returns whether arrays or traversable objects stored in this member
-     * should be traversed and validated in each entry
-     *
-     * @return Boolean
-     */
-    public function isCollectionCascaded()
-    {
-        return $this->collectionCascaded;
-    }
-
-    /**
-     * Returns the value of this property in the given object
-     *
-     * @param object $object The object
-     *
-     * @return mixed The property value
-     */
-    abstract public function getValue($object);
-
-    /**
-     * Returns the Reflection instance of the member
-     *
-     * @return object
-     */
-    public function getReflectionMember()
-    {
-        if (!$this->reflMember) {
-            $this->reflMember = $this->newReflectionMember();
+        $className = \is_string($objectOrClassName) ? $objectOrClassName : \get_class($objectOrClassName);
+        if (!isset($this->reflMember[$className])) {
+            $this->reflMember[$className] = $this->newReflectionMember($objectOrClassName);
         }
 
-        return $this->reflMember;
+        return $this->reflMember[$className];
     }
 
     /**
-     * Creates a new Reflection instance for the member
+     * Creates a new reflection instance for accessing the member's value.
      *
-     * @return object
+     * Must be implemented by subclasses.
+     *
+     * @param object|string $objectOrClassName The object or the class name
+     *
+     * @return \ReflectionMethod|\ReflectionProperty The reflection instance
      */
-    abstract protected function newReflectionMember();
+    abstract protected function newReflectionMember($objectOrClassName);
 }

@@ -11,29 +11,27 @@
 
 namespace Symfony\Component\Security\Core\Authentication\Token;
 
+use Symfony\Component\Security\Core\User\UserInterface;
+
 /**
  * AnonymousToken represents an anonymous token.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-use Symfony\Component\Security\Core\User\UserInterface;
-
 class AnonymousToken extends AbstractToken
 {
-    private $key;
+    private $secret;
 
     /**
-     * Constructor.
-     *
-     * @param string $key   The key shared with the authentication provider
-     * @param string $user  The user
-     * @param Role[] $roles An array of roles
+     * @param string                           $secret A secret used to make sure the token is created by the app and not by a malicious client
+     * @param string|\Stringable|UserInterface $user
+     * @param string[]                         $roles
      */
-    public function __construct($key, $user, array $roles = array())
+    public function __construct(string $secret, $user, array $roles = [])
     {
         parent::__construct($roles);
 
-        $this->key = $key;
+        $this->secret = $secret;
         $this->setUser($user);
         $this->setAuthenticated(true);
     }
@@ -47,29 +45,29 @@ class AnonymousToken extends AbstractToken
     }
 
     /**
-     * Returns the key.
+     * Returns the secret.
      *
-     * @return string The Key
+     * @return string
      */
-    public function getKey()
+    public function getSecret()
     {
-        return $this->key;
+        return $this->secret;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function serialize()
+    public function __serialize(): array
     {
-        return serialize(array($this->key, parent::serialize()));
+        return [$this->secret, parent::__serialize()];
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function unserialize($str)
+    public function __unserialize(array $data): void
     {
-        list($this->key, $parentStr) = unserialize($str);
-        parent::unserialize($parentStr);
+        [$this->secret, $parentData] = $data;
+        parent::__unserialize($parentData);
     }
 }

@@ -1,7 +1,5 @@
 <?php
 
-namespace Symfony\Component\Security\Core\Authentication\RememberMe;
-
 /*
  * This file is part of the Symfony package.
  *
@@ -11,10 +9,12 @@ namespace Symfony\Component\Security\Core\Authentication\RememberMe;
  * file that was distributed with this source code.
  */
 
+namespace Symfony\Component\Security\Core\Authentication\RememberMe;
+
 /**
- * This class is only used by PersistentTokenRememberMeServices internally.
- *
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
+ *
+ * @internal
  */
 final class PersistentToken implements PersistentTokenInterface
 {
@@ -24,21 +24,12 @@ final class PersistentToken implements PersistentTokenInterface
     private $tokenValue;
     private $lastUsed;
 
-    /**
-     * Constructor
-     *
-     * @param string   $class
-     * @param string   $username
-     * @param string   $series
-     * @param string   $tokenValue
-     * @param DateTime $lastUsed
-     */
-    public function __construct($class, $username, $series, $tokenValue, \DateTime $lastUsed)
+    public function __construct(string $class, string $username, string $series, string $tokenValue, \DateTime $lastUsed)
     {
         if (empty($class)) {
             throw new \InvalidArgumentException('$class must not be empty.');
         }
-        if (empty($username)) {
+        if ('' === $username) {
             throw new \InvalidArgumentException('$username must not be empty.');
         }
         if (empty($series)) {
@@ -56,51 +47,41 @@ final class PersistentToken implements PersistentTokenInterface
     }
 
     /**
-     * Returns the class of the user
-     *
-     * @return string
+     * {@inheritdoc}
      */
-    public function getClass()
+    public function getClass(): string
     {
         return $this->class;
     }
 
     /**
-     * Returns the username
-     *
-     * @return string
+     * {@inheritdoc}
      */
-    public function getUsername()
+    public function getUsername(): string
     {
         return $this->username;
     }
 
     /**
-     * Returns the series
-     *
-     * @return string
+     * {@inheritdoc}
      */
-    public function getSeries()
+    public function getSeries(): string
     {
         return $this->series;
     }
 
     /**
-     * Returns the token value
-     *
-     * @return string
+     * {@inheritdoc}
      */
-    public function getTokenValue()
+    public function getTokenValue(): string
     {
         return $this->tokenValue;
     }
 
     /**
-     * Returns the time the token was last used
-     *
-     * @return DateTime
+     * {@inheritdoc}
      */
-    public function getLastUsed()
+    public function getLastUsed(): \DateTime
     {
         return $this->lastUsed;
     }

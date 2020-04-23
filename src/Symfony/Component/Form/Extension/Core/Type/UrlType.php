@@ -12,41 +12,57 @@
 namespace Symfony\Component\Form\Extension\Core\Type;
 
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\FormBuilder;
 use Symfony\Component\Form\Extension\Core\EventListener\FixUrlProtocolListener;
+use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\Form\FormInterface;
+use Symfony\Component\Form\FormView;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
 class UrlType extends AbstractType
 {
     /**
      * {@inheritdoc}
      */
-    public function buildForm(FormBuilder $builder, array $options)
+    public function buildForm(FormBuilderInterface $builder, array $options)
     {
-        $builder->addEventSubscriber(new FixUrlProtocolListener($options['default_protocol']));
+        if (null !== $options['default_protocol']) {
+            $builder->addEventSubscriber(new FixUrlProtocolListener($options['default_protocol']));
+        }
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getDefaultOptions(array $options)
+    public function buildView(FormView $view, FormInterface $form, array $options)
     {
-        return array(
-            'default_protocol' => 'http',
-        );
+        if ($options['default_protocol']) {
+            $view->vars['attr']['inputmode'] = 'url';
+            $view->vars['type'] = 'text';
+        }
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getParent(array $options)
+    public function configureOptions(OptionsResolver $resolver)
     {
-        return 'text';
+        $resolver->setDefault('default_protocol', 'http');
+
+        $resolver->setAllowedTypes('default_protocol', ['null', 'string']);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getName()
+    public function getParent()
+    {
+        return TextType::class;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getBlockPrefix()
     {
         return 'url';
     }

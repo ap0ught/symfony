@@ -11,49 +11,50 @@
 
 namespace Symfony\Component\CssSelector\Node;
 
-use Symfony\Component\CssSelector\XPathExpr;
-
 /**
- * ClassNode represents a "selector.className" node.
+ * Represents a "<selector>.<name>" node.
  *
- * This component is a port of the Python lxml library,
- * which is copyright Infrae and distributed under the BSD license.
+ * This component is a port of the Python cssselect library,
+ * which is copyright Ian Bicking, @see https://github.com/SimonSapin/cssselect.
  *
- * @author Fabien Potencier <fabien@symfony.com>
+ * @author Jean-François Simon <jeanfrancois.simon@sensiolabs.com>
+ *
+ * @internal
  */
-class ClassNode implements NodeInterface
+class ClassNode extends AbstractNode
 {
-    protected $selector;
-    protected $className;
+    private $selector;
+    private $name;
 
-    /**
-     * The constructor.
-     *
-     * @param NodeInterface $selector The XPath Selector
-     * @param string $className The class name
-     */
-    public function __construct($selector, $className)
+    public function __construct(NodeInterface $selector, string $name)
     {
         $this->selector = $selector;
-        $this->className = $className;
+        $this->name = $name;
+    }
+
+    public function getSelector(): NodeInterface
+    {
+        return $this->selector;
+    }
+
+    public function getName(): string
+    {
+        return $this->name;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function __toString()
+    public function getSpecificity(): Specificity
     {
-        return sprintf('%s[%s.%s]', __CLASS__, $this->selector, $this->className);
+        return $this->selector->getSpecificity()->plus(new Specificity(0, 1, 0));
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function toXpath()
+    public function __toString(): string
     {
-        $selXpath = $this->selector->toXpath();
-        $selXpath->addCondition(sprintf("contains(concat(' ', normalize-space(@class), ' '), %s)", XPathExpr::xpathLiteral(' '.$this->className.' ')));
-
-        return $selXpath;
+        return sprintf('%s[%s.%s]', $this->getNodeName(), $this->selector, $this->name);
     }
 }

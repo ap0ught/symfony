@@ -15,10 +15,8 @@ namespace Symfony\Component\Yaml\Exception;
  * Exception class thrown when an error occurs during parsing.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
-class ParseException extends \RuntimeException implements ExceptionInterface
+class ParseException extends RuntimeException
 {
     private $parsedFile;
     private $parsedLine;
@@ -26,15 +24,13 @@ class ParseException extends \RuntimeException implements ExceptionInterface
     private $rawMessage;
 
     /**
-     * Constructor.
-     *
-     * @param string    $message  The error message
-     * @param integer   $lineno   The line where the error occurred
-     * @param integer   $snippet  The snippet of code near the problem
-     * @param string    $filename The file name where the error occurred
-     * @param Exception $previous The previous exception
+     * @param string          $message    The error message
+     * @param int             $parsedLine The line where the error occurred
+     * @param string|null     $snippet    The snippet of code near the problem
+     * @param string|null     $parsedFile The file name where the error occurred
+     * @param \Exception|null $previous   The previous exception
      */
-    public function __construct($message, $parsedLine = -1, $snippet = null, $parsedFile = null, Exception $previous = null)
+    public function __construct(string $message, int $parsedLine = -1, string $snippet = null, string $parsedFile = null, \Throwable $previous = null)
     {
         $this->parsedFile = $parsedFile;
         $this->parsedLine = $parsedLine;
@@ -58,10 +54,8 @@ class ParseException extends \RuntimeException implements ExceptionInterface
 
     /**
      * Sets the snippet of code near the error.
-     *
-     * @param string $parsedFile The filename
      */
-    public function setSnippet($snippet)
+    public function setSnippet(string $snippet)
     {
         $this->snippet = $snippet;
 
@@ -82,10 +76,8 @@ class ParseException extends \RuntimeException implements ExceptionInterface
 
     /**
      * Sets the filename where the error occurred.
-     *
-     * @param string $parsedFile The filename
      */
-    public function setParsedFile($parsedFile)
+    public function setParsedFile(string $parsedFile)
     {
         $this->parsedFile = $parsedFile;
 
@@ -95,7 +87,7 @@ class ParseException extends \RuntimeException implements ExceptionInterface
     /**
      * Gets the line where the error occurred.
      *
-     * @return integer The file line
+     * @return int The file line
      */
     public function getParsedLine()
     {
@@ -104,10 +96,8 @@ class ParseException extends \RuntimeException implements ExceptionInterface
 
     /**
      * Sets the line where the error occurred.
-     *
-     * @param integer $parsedLine The file line
      */
-    public function setParsedLine($parsedLine)
+    public function setParsedLine(int $parsedLine)
     {
         $this->parsedLine = $parsedLine;
 
@@ -125,7 +115,7 @@ class ParseException extends \RuntimeException implements ExceptionInterface
         }
 
         if (null !== $this->parsedFile) {
-            $this->message .= sprintf(' in %s', json_encode($this->parsedFile));
+            $this->message .= sprintf(' in %s', json_encode($this->parsedFile, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         }
 
         if ($this->parsedLine >= 0) {

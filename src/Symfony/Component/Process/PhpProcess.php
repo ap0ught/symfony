@@ -11,68 +11,62 @@
 
 namespace Symfony\Component\Process;
 
+use Symfony\Component\Process\Exception\LogicException;
+use Symfony\Component\Process\Exception\RuntimeException;
+
 /**
  * PhpProcess runs a PHP script in an independent process.
  *
- * $p = new PhpProcess('<?php echo "foo"; ?>');
- * $p->run();
- * print $p->getOutput()."\n";
+ *     $p = new PhpProcess('<?php echo "foo"; ?>');
+ *     $p->run();
+ *     print $p->getOutput()."\n";
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 class PhpProcess extends Process
 {
-    private $executableFinder;
-
     /**
-     * Constructor.
-     *
-     * @param string  $script  The PHP script to run (as a string)
-     * @param string  $cwd     The working directory
-     * @param array   $env     The environment variables
-     * @param integer $timeout The timeout in seconds
-     * @param array   $options An array of options for proc_open
-     *
-     * @api
+     * @param string      $script  The PHP script to run (as a string)
+     * @param string|null $cwd     The working directory or null to use the working dir of the current PHP process
+     * @param array|null  $env     The environment variables or null to use the same environment as the current PHP process
+     * @param int         $timeout The timeout in seconds
+     * @param array|null  $php     Path to the PHP binary to use with any additional arguments
      */
-    public function __construct($script, $cwd = null, array $env = array(), $timeout = 60, array $options = array())
+    public function __construct(string $script, string $cwd = null, array $env = null, int $timeout = 60, array $php = null)
     {
-        parent::__construct(null, $cwd, $env, $script, $timeout, $options);
-
-        $this->executableFinder = new PhpExecutableFinder();
-    }
-
-    /**
-     * Sets the path to the PHP binary to use.
-     *
-     * @api
-     */
-    public function setPhpBinary($php)
-    {
-        $this->setCommandLine($php);
-    }
-
-    /**
-     * Runs the process.
-     *
-     * @param Closure|string|array $callback A PHP callback to run whenever there is some
-     *                                       output available on STDOUT or STDERR
-     *
-     * @return integer The exit status code
-     *
-     * @api
-     */
-    public function run($callback = null)
-    {
-        if (null === $this->getCommandLine()) {
-            if (false === $php = $this->executableFinder->find()) {
-                throw new \RuntimeException('Unable to find the PHP executable.');
-            }
-            $this->setCommandLine($php);
+        if (null === $php) {
+            $executableFinder = new PhpExecutableFinder();
+            $php = $executableFinder->find(false);
+            $php = false === $php ? null : array_merge([$php], $executableFinder->findArguments());
+        }
+        if ('phpdbg' === \PHP_SAPI) {
+            $file = tempnam(sys_get_temp_dir(), 'dbg');
+            file_put_contents($file, $script);
+            register_shutdown_function('unlink', $file);
+            $php[] = $file;
+            $script = null;
         }
 
-        return parent::run($callback);
+        parent::__construct($php, $cwd, $env, $script, $timeout);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public static function fromShellCommandline(string $command, string $cwd = null, array $env = null, $input = null, ?float $timeout = 60)
+    {
+        throw new LogicException(sprintf('The "%s()" method cannot be called when using "%s".', __METHOD__, self::class));
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function start(callable $callback = null, array $env = [])
+    {
+        if (null === $this->getCommandLine()) {
+            throw new RuntimeException('Unable to find the PHP executable.');
+        }
+
+        parent::start($callback, $env);
     }
 }

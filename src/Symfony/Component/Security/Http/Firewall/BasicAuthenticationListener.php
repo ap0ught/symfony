@@ -11,35 +11,41 @@
 
 namespace Symfony\Component\Security\Http\Firewall;
 
-use Symfony\Component\Security\Core\SecurityContextInterface;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\Security\Core\Authentication\AuthenticationManagerInterface;
-use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface;
-use Symfony\Component\HttpKernel\Log\LoggerInterface;
-use Symfony\Component\HttpKernel\Event\GetResponseEvent;
+use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
 use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
 use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Http\EntryPoint\AuthenticationEntryPointInterface;
+use Symfony\Component\Security\Http\Session\SessionAuthenticationStrategyInterface;
 
 /**
  * BasicAuthenticationListener implements Basic HTTP authentication.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class BasicAuthenticationListener implements ListenerInterface
+class BasicAuthenticationListener extends AbstractListener
 {
-    private $securityContext;
+    private $tokenStorage;
     private $authenticationManager;
     private $providerKey;
     private $authenticationEntryPoint;
     private $logger;
     private $ignoreFailure;
+    private $sessionStrategy;
 
-    public function __construct(SecurityContextInterface $securityContext, AuthenticationManagerInterface $authenticationManager, $providerKey, AuthenticationEntryPointInterface $authenticationEntryPoint, LoggerInterface $logger = null)
+    public function __construct(TokenStorageInterface $tokenStorage, AuthenticationManagerInterface $authenticationManager, string $providerKey, AuthenticationEntryPointInterface $authenticationEntryPoint, LoggerInterface $logger = null)
     {
         if (empty($providerKey)) {
             throw new \InvalidArgumentException('$providerKey must not be empty.');
         }
 
-        $this->securityContext = $securityContext;
+        $this->tokenStorage = $tokenStorage;
         $this->authenticationManager = $authenticationManager;
         $this->providerKey = $providerKey;
         $this->authenticationEntryPoint = $authenticationEntryPoint;
@@ -48,43 +54,74 @@ class BasicAuthenticationListener implements ListenerInterface
     }
 
     /**
-     * Handles basic authentication.
-     *
-     * @param GetResponseEvent $event A GetResponseEvent instance
+     * {@inheritdoc}
      */
-    public function handle(GetResponseEvent $event)
+    public function supports(Request $request): ?bool
+    {
+        return null !== $request->headers->get('PHP_AUTH_USER');
+    }
+
+    /**
+     * Handles basic authentication.
+     */
+    public function authenticate(RequestEvent $event)
     {
         $request = $event->getRequest();
 
-        if (false === $username = $request->server->get('PHP_AUTH_USER', false)) {
+        if (null === $username = $request->headers->get('PHP_AUTH_USER')) {
             return;
         }
 
-        if (null !== $token = $this->securityContext->getToken()) {
+        if (null !== $token = $this->tokenStorage->getToken()) {
             if ($token instanceof UsernamePasswordToken && $token->isAuthenticated() && $token->getUsername() === $username) {
                 return;
             }
         }
 
         if (null !== $this->logger) {
-            $this->logger->info(sprintf('Basic Authentication Authorization header found for user "%s"', $username));
+            $this->logger->info('Basic authentication Authorization header found for user.', ['username' => $username]);
         }
 
         try {
-            $token = $this->authenticationManager->authenticate(new UsernamePasswordToken($username, $request->server->get('PHP_AUTH_PW'), $this->providerKey));
-            $this->securityContext->setToken($token);
-        } catch (AuthenticationException $failed) {
-            $this->securityContext->setToken(null);
+            $token = $this->authenticationManager->authenticate(new UsernamePasswordToken($username, $request->headers->get('PHP_AUTH_PW'), $this->providerKey));
+
+            $this->migrateSession($request, $token);
+
+            $this->tokenStorage->setToken($token);
+        } catch (AuthenticationException $e) {
+            $token = $this->tokenStorage->getToken();
+            if ($token instanceof UsernamePasswordToken && $this->providerKey === $token->getProviderKey()) {
+                $this->tokenStorage->setToken(null);
+            }
 
             if (null !== $this->logger) {
-                $this->logger->info(sprintf('Authentication request failed for user "%s": %s', $username, $failed->getMessage()));
+                $this->logger->info('Basic authentication failed for user.', ['username' => $username, 'exception' => $e]);
             }
 
             if ($this->ignoreFailure) {
                 return;
             }
 
-            $event->setResponse($this->authenticationEntryPoint->start($request, $failed));
+            $event->setResponse($this->authenticationEntryPoint->start($request, $e));
         }
+    }
+
+    /**
+     * Call this method if your authentication token is stored to a session.
+     *
+     * @final
+     */
+    public function setSessionAuthenticationStrategy(SessionAuthenticationStrategyInterface $sessionStrategy)
+    {
+        $this->sessionStrategy = $sessionStrategy;
+    }
+
+    private function migrateSession(Request $request, TokenInterface $token)
+    {
+        if (!$this->sessionStrategy || !$request->hasSession() || !$request->hasPreviousSession()) {
+            return;
+        }
+
+        $this->sessionStrategy->onAuthentication($request, $token);
     }
 }

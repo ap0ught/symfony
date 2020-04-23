@@ -11,47 +11,43 @@
 
 namespace Symfony\Component\Validator\Constraints;
 
+use Symfony\Component\Intl\Countries;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
 use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * Validates whether a value is a valid country code
+ * Validates whether a value is a valid country code.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
- *
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class CountryValidator extends ConstraintValidator
 {
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($value, Constraint $constraint)
+    public function validate($value, Constraint $constraint)
     {
-        if (null === $value || '' === $value) {
-            return true;
+        if (!$constraint instanceof Country) {
+            throw new UnexpectedTypeException($constraint, Country::class);
         }
 
-        if (!is_scalar($value) && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (null === $value || '' === $value) {
+            return;
+        }
+
+        if (!is_scalar($value) && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
         $value = (string) $value;
 
-        if (!in_array($value, \Symfony\Component\Locale\Locale::getCountries())) {
-            $this->setMessage($constraint->message, array('{{ value }}' => $value));
-
-            return false;
+        if ($constraint->alpha3 ? !Countries::alpha3CodeExists($value) : !Countries::exists($value)) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($value))
+                ->setCode(Country::NO_SUCH_COUNTRY_ERROR)
+                ->addViolation();
         }
-
-        return true;
     }
 }

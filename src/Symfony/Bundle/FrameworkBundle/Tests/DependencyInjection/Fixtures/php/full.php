@@ -1,67 +1,81 @@
 <?php
 
-$container->loadFromExtension('framework', array(
+$container->loadFromExtension('framework', [
     'secret' => 's3cr3t',
-    'form' => null,
-    'csrf_protection' => array(
-        'enabled'    => true,
-        'field_name' => '_csrf',
-    ),
-    'esi' => array(
+    'default_locale' => 'fr',
+    'csrf_protection' => true,
+    'form' => [
+        'csrf_protection' => [
+            'field_name' => '_csrf',
+        ],
+    ],
+    'http_method_override' => false,
+    'esi' => [
         'enabled' => true,
-    ),
-    'profiler' => array(
+    ],
+    'ssi' => [
+        'enabled' => true,
+    ],
+    'profiler' => [
         'only_exceptions' => true,
-    ),
-    'router' => array(
-        'resource'     => '%kernel.root_dir%/config/routing.xml',
-        'type'         => 'xml',
-    ),
-    'session' => array(
-        'auto_start'     => true,
-        'default_locale' => 'fr',
-        'storage_id'     => 'session.storage.native',
-        'name'           => '_SYMFONY',
-        'lifetime'       => 86400,
-        'path'           => '/',
-        'domain'         => 'example.com',
-        'secure'         => true,
-        'httponly'       => true,
-    ),
-    'templating' => array(
-        'assets_version'   => 'SomeVersionScheme',
-        'assets_base_urls' => 'http://cdn.example.com',
-        'cache'            => '/path/to/cache',
-        'engines'          => array('php', 'twig'),
-        'loader'           => array('loader.foo', 'loader.bar'),
-        'packages'         => array(
-            'images' => array(
-                'version'   => '1.0.0',
-                'base_urls' => array('http://images1.example.com', 'http://images2.example.com'),
-            ),
-            'foo' => array(
-                'version' => '1.0.0',
-            ),
-            'bar' => array(
-                'base_urls' => array('http://bar1.example.com', 'http://bar2.example.com'),
-            ),
-        ),
-        'form'              => array(
-            'resources'     => array('theme1', 'theme2')
-        ),
-    ),
-    'translator' => array(
-        'enabled'  => true,
-        'fallback' => 'fr',
-    ),
-    'validation' => array(
+        'enabled' => false,
+    ],
+    'router' => [
+        'resource' => '%kernel.project_dir%/config/routing.xml',
+        'type' => 'xml',
+        'utf8' => true,
+    ],
+    'session' => [
+        'storage_id' => 'session.storage.native',
+        'handler_id' => 'session.handler.native_file',
+        'name' => '_SYMFONY',
+        'cookie_lifetime' => 86400,
+        'cookie_path' => '/',
+        'cookie_domain' => 'example.com',
+        'cookie_secure' => true,
+        'cookie_httponly' => false,
+        'use_cookies' => true,
+        'gc_maxlifetime' => 90000,
+        'gc_divisor' => 108,
+        'gc_probability' => 1,
+        'sid_length' => 22,
+        'sid_bits_per_character' => 4,
+        'save_path' => '/path/to/sessions',
+    ],
+    'assets' => [
+        'version' => 'v1',
+    ],
+    'translator' => [
         'enabled' => true,
-        'cache'   => 'apc',
-    ),
-    'annotations' => array(
+        'fallback' => 'fr',
+        'paths' => ['%kernel.project_dir%/Fixtures/translations'],
+        'cache_dir' => '%kernel.cache_dir%/translations',
+        'enabled_locales' => ['fr', 'en']
+    ],
+    'validation' => [
+        'enabled' => true,
+    ],
+    'annotations' => [
         'cache' => 'file',
         'debug' => true,
         'file_cache_dir' => '%kernel.cache_dir%/annotations',
-    ),
-    'ide' => 'file%%link%%format'
-));
+    ],
+    'serializer' => [
+        'enabled' => true,
+        'enable_annotations' => true,
+        'name_converter' => 'serializer.name_converter.camel_case_to_snake_case',
+        'circular_reference_handler' => 'my.circular.reference.handler',
+        'max_depth_handler' => 'my.max.depth.handler',
+    ],
+    'property_info' => true,
+    'ide' => 'file%%link%%format',
+    'request' => [
+        'formats' => [
+            'csv' => [
+                'text/csv',
+                'text/plain',
+            ],
+            'pdf' => 'application/pdf',
+        ],
+    ],
+]);

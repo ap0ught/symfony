@@ -23,25 +23,24 @@ class ServiceReferenceGraphEdge
     private $sourceNode;
     private $destNode;
     private $value;
+    private $lazy;
+    private $weak;
+    private $byConstructor;
 
-    /**
-     * Constructor.
-     *
-     * @param ServiceReferenceGraphNode $sourceNode
-     * @param ServiceReferenceGraphNode $destNode
-     * @param string $value
-     */
-    public function __construct(ServiceReferenceGraphNode $sourceNode, ServiceReferenceGraphNode $destNode, $value = null)
+    public function __construct(ServiceReferenceGraphNode $sourceNode, ServiceReferenceGraphNode $destNode, $value = null, bool $lazy = false, bool $weak = false, bool $byConstructor = false)
     {
         $this->sourceNode = $sourceNode;
         $this->destNode = $destNode;
         $this->value = $value;
+        $this->lazy = $lazy;
+        $this->weak = $weak;
+        $this->byConstructor = $byConstructor;
     }
 
     /**
-     * Returns the value of the edge
+     * Returns the value of the edge.
      *
-     * @return ServiceReferenceGraphNode
+     * @return mixed
      */
     public function getValue()
     {
@@ -49,7 +48,7 @@ class ServiceReferenceGraphEdge
     }
 
     /**
-     * Returns the source node
+     * Returns the source node.
      *
      * @return ServiceReferenceGraphNode
      */
@@ -59,12 +58,42 @@ class ServiceReferenceGraphEdge
     }
 
     /**
-     * Returns the destination node
+     * Returns the destination node.
      *
      * @return ServiceReferenceGraphNode
      */
     public function getDestNode()
     {
         return $this->destNode;
+    }
+
+    /**
+     * Returns true if the edge is lazy, meaning it's a dependency not requiring direct instantiation.
+     *
+     * @return bool
+     */
+    public function isLazy()
+    {
+        return $this->lazy;
+    }
+
+    /**
+     * Returns true if the edge is weak, meaning it shouldn't prevent removing the target service.
+     *
+     * @return bool
+     */
+    public function isWeak()
+    {
+        return $this->weak;
+    }
+
+    /**
+     * Returns true if the edge links with a constructor argument.
+     *
+     * @return bool
+     */
+    public function isReferencedByConstructor()
+    {
+        return $this->byConstructor;
     }
 }

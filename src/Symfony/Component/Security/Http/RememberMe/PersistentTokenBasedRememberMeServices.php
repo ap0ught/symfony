@@ -1,17 +1,5 @@
 <?php
 
-namespace Symfony\Component\Security\Http\RememberMe;
-
-use Symfony\Component\Security\Core\Authentication\RememberMe\TokenProviderInterface;
-use Symfony\Component\HttpFoundation\Cookie;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\Security\Core\Exception\AuthenticationException;
-use Symfony\Component\Security\Core\Exception\CookieTheftException;
-use Symfony\Component\Security\Core\Authentication\RememberMe\PersistentToken;
-use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
-use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
-
 /*
  * This file is part of the Symfony package.
  *
@@ -20,6 +8,18 @@ use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
+
+namespace Symfony\Component\Security\Http\RememberMe;
+
+use Symfony\Component\HttpFoundation\Cookie;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Security\Core\Authentication\RememberMe\PersistentToken;
+use Symfony\Component\Security\Core\Authentication\RememberMe\PersistentTokenInterface;
+use Symfony\Component\Security\Core\Authentication\RememberMe\TokenProviderInterface;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Core\Exception\CookieTheftException;
 
 /**
  * Concrete implementation of the RememberMeServicesInterface which needs
@@ -30,49 +30,46 @@ use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
  */
 class PersistentTokenBasedRememberMeServices extends AbstractRememberMeServices
 {
+    private const HASHED_TOKEN_PREFIX = 'sha256_';
+
+    /** @var TokenProviderInterface */
     private $tokenProvider;
 
-    /**
-     * Sets the token provider
-     *
-     * @param TokenProviderInterface $tokenProvider
-     * @return void
-     */
     public function setTokenProvider(TokenProviderInterface $tokenProvider)
     {
         $this->tokenProvider = $tokenProvider;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function logout(Request $request, Response $response, TokenInterface $token)
+    protected function cancelCookie(Request $request)
     {
-        parent::logout($request, $response, $token);
+        // Delete cookie on the client
+        parent::cancelCookie($request);
 
+        // Delete cookie from the tokenProvider
         if (null !== ($cookie = $request->cookies->get($this->options['name']))
-            && count($parts = $this->decodeCookie($cookie)) === 2
+            && 2 === \count($parts = $this->decodeCookie($cookie))
         ) {
-            list($series, $tokenValue) = $parts;
+            list($series) = $parts;
             $this->tokenProvider->deleteTokenBySeries($series);
         }
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function processAutoLoginCookie(array $cookieParts, Request $request)
     {
-        if (count($cookieParts) !== 2) {
+        if (2 !== \count($cookieParts)) {
             throw new AuthenticationException('The cookie is invalid.');
         }
 
         list($series, $tokenValue) = $cookieParts;
         $persistentToken = $this->tokenProvider->loadTokenBySeries($series);
 
-        if ($persistentToken->getTokenValue() !== $tokenValue) {
-            $this->tokenProvider->deleteTokenBySeries($series);
-
+        if (!$this->isTokenValueValid($persistentToken, $tokenValue)) {
             throw new CookieTheftException('This token was already used. The account is possibly compromised.');
         }
 
@@ -80,18 +77,19 @@ class PersistentTokenBasedRememberMeServices extends AbstractRememberMeServices
             throw new AuthenticationException('The cookie has expired.');
         }
 
-        $series = $persistentToken->getSeries();
-        $tokenValue = $this->generateRandomValue();
-        $this->tokenProvider->updateToken($series, $tokenValue, new \DateTime());
+        $tokenValue = base64_encode(random_bytes(64));
+        $this->tokenProvider->updateToken($series, $this->generateHash($tokenValue), new \DateTime());
         $request->attributes->set(self::COOKIE_ATTR_NAME,
             new Cookie(
                 $this->options['name'],
-                $this->encodeCookie(array($series, $tokenValue)),
+                $this->encodeCookie([$series, $tokenValue]),
                 time() + $this->options['lifetime'],
                 $this->options['path'],
                 $this->options['domain'],
-                $this->options['secure'],
-                $this->options['httponly']
+                $this->options['secure'] ?? $request->isSecure(),
+                $this->options['httponly'],
+                false,
+                $this->options['samesite']
             )
         );
 
@@ -99,19 +97,19 @@ class PersistentTokenBasedRememberMeServices extends AbstractRememberMeServices
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function onLoginSuccess(Request $request, Response $response, TokenInterface $token)
     {
-        $series = $this->generateRandomValue();
-        $tokenValue = $this->generateRandomValue();
+        $series = base64_encode(random_bytes(64));
+        $tokenValue = base64_encode(random_bytes(64));
 
         $this->tokenProvider->createNewToken(
             new PersistentToken(
-                get_class($user = $token->getUser()),
+                \get_class($user = $token->getUser()),
                 $user->getUsername(),
                 $series,
-                $tokenValue,
+                $this->generateHash($tokenValue),
                 new \DateTime()
             )
         );
@@ -119,35 +117,29 @@ class PersistentTokenBasedRememberMeServices extends AbstractRememberMeServices
         $response->headers->setCookie(
             new Cookie(
                 $this->options['name'],
-                $this->encodeCookie(array($series, $tokenValue)),
+                $this->encodeCookie([$series, $tokenValue]),
                 time() + $this->options['lifetime'],
                 $this->options['path'],
                 $this->options['domain'],
-                $this->options['secure'],
-                $this->options['httponly']
+                $this->options['secure'] ?? $request->isSecure(),
+                $this->options['httponly'],
+                false,
+                $this->options['samesite']
             )
         );
     }
 
-    /**
-     * Generates a cryptographically strong random value
-     *
-     * @return string
-     */
-    protected function generateRandomValue()
+    private function generateHash(string $tokenValue): string
     {
-        if (function_exists('openssl_random_pseudo_bytes')) {
-            $bytes = openssl_random_pseudo_bytes(64, $strong);
+        return self::HASHED_TOKEN_PREFIX.hash_hmac('sha256', $tokenValue, $this->getSecret());
+    }
 
-            if (true === $strong && false !== $bytes) {
-                return base64_encode($bytes);
-            }
+    private function isTokenValueValid(PersistentTokenInterface $persistentToken, string $tokenValue): bool
+    {
+        if (0 === strpos($persistentToken->getTokenValue(), self::HASHED_TOKEN_PREFIX)) {
+            return hash_equals($persistentToken->getTokenValue(), $this->generateHash($tokenValue));
         }
 
-        if (null !== $this->logger) {
-            $this->logger->warn('Could not produce a cryptographically strong random value. Please install/update the OpenSSL extension.');
-        }
-
-        return base64_encode(hash('sha512', uniqid(mt_rand(), true), true));
+        return hash_equals($persistentToken->getTokenValue(), $tokenValue);
     }
 }

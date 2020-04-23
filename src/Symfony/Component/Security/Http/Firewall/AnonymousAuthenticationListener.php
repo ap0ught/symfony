@@ -11,45 +11,72 @@
 
 namespace Symfony\Component\Security\Http\Firewall;
 
-use Symfony\Component\Security\Core\SecurityContextInterface;
-use Symfony\Component\HttpKernel\Log\LoggerInterface;
-use Symfony\Component\HttpKernel\Event\GetResponseEvent;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\Security\Core\Authentication\AuthenticationManagerInterface;
 use Symfony\Component\Security\Core\Authentication\Token\AnonymousToken;
+use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+
+// Help opcache.preload discover always-needed symbols
+class_exists(AnonymousToken::class);
 
 /**
  * AnonymousAuthenticationListener automatically adds a Token if none is
  * already present.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class AnonymousAuthenticationListener implements ListenerInterface
+class AnonymousAuthenticationListener extends AbstractListener
 {
-    private $context;
-    private $key;
+    private $tokenStorage;
+    private $secret;
+    private $authenticationManager;
     private $logger;
 
-    public function __construct(SecurityContextInterface $context, $key, LoggerInterface $logger = null)
+    public function __construct(TokenStorageInterface $tokenStorage, string $secret, LoggerInterface $logger = null, AuthenticationManagerInterface $authenticationManager = null)
     {
-        $this->context = $context;
-        $this->key     = $key;
-        $this->logger  = $logger;
+        $this->tokenStorage = $tokenStorage;
+        $this->secret = $secret;
+        $this->authenticationManager = $authenticationManager;
+        $this->logger = $logger;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function supports(Request $request): ?bool
+    {
+        return null; // always run authenticate() lazily with lazy firewalls
     }
 
     /**
      * Handles anonymous authentication.
-     *
-     * @param GetResponseEvent $event A GetResponseEvent instance
      */
-    public function handle(GetResponseEvent $event)
+    public function authenticate(RequestEvent $event)
     {
-        if (null !== $this->context->getToken()) {
+        if (null !== $this->tokenStorage->getToken()) {
             return;
         }
 
-        $this->context->setToken(new AnonymousToken($this->key, 'anon.', array()));
+        try {
+            $token = new AnonymousToken($this->secret, 'anon.', []);
+            if (null !== $this->authenticationManager) {
+                $token = $this->authenticationManager->authenticate($token);
+            }
 
-        if (null !== $this->logger) {
-            $this->logger->info(sprintf('Populated SecurityContext with an anonymous Token'));
+            $this->tokenStorage->setToken($token);
+
+            if (null !== $this->logger) {
+                $this->logger->info('Populated the TokenStorage with an anonymous Token.');
+            }
+        } catch (AuthenticationException $failed) {
+            if (null !== $this->logger) {
+                $this->logger->info('Anonymous authentication failed.', ['exception' => $failed]);
+            }
         }
     }
 }

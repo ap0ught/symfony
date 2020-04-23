@@ -11,36 +11,75 @@
 
 namespace Symfony\Component\HttpKernel\DataCollector;
 
+use Symfony\Component\EventDispatcher\Debug\TraceableEventDispatcher;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Debug\TraceableEventDispatcherInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 /**
  * EventDataCollector.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class EventDataCollector extends DataCollector
+class EventDataCollector extends DataCollector implements LateDataCollectorInterface
 {
-    private $dispatcher;
+    protected $dispatcher;
+    private $requestStack;
+    private $currentRequest;
 
-    public function setEventDispatcher(EventDispatcherInterface $dispatcher)
+    public function __construct(EventDispatcherInterface $dispatcher = null, RequestStack $requestStack = null)
     {
-        if ($dispatcher instanceof TraceableEventDispatcherInterface) {
-            $this->dispatcher = $dispatcher;
-        }
+        $this->dispatcher = $dispatcher;
+        $this->requestStack = $requestStack;
     }
 
     /**
      * {@inheritdoc}
      */
-    public function collect(Request $request, Response $response, \Exception $exception = null)
+    public function collect(Request $request, Response $response, \Throwable $exception = null)
     {
-        $this->data = array(
-            'called_listeners'     => null !== $this->dispatcher ? $this->dispatcher->getCalledListeners() : array(),
-            'not_called_listeners' => null !== $this->dispatcher ? $this->dispatcher->getNotCalledListeners() : array(),
-        );
+        $this->currentRequest = $this->requestStack && $this->requestStack->getMasterRequest() !== $request ? $request : null;
+        $this->data = [
+            'called_listeners' => [],
+            'not_called_listeners' => [],
+            'orphaned_events' => [],
+        ];
+    }
+
+    public function reset()
+    {
+        $this->data = [];
+
+        if ($this->dispatcher instanceof ResetInterface) {
+            $this->dispatcher->reset();
+        }
+    }
+
+    public function lateCollect()
+    {
+        if ($this->dispatcher instanceof TraceableEventDispatcher) {
+            $this->setCalledListeners($this->dispatcher->getCalledListeners($this->currentRequest));
+            $this->setNotCalledListeners($this->dispatcher->getNotCalledListeners($this->currentRequest));
+            $this->setOrphanedEvents($this->dispatcher->getOrphanedEvents($this->currentRequest));
+        }
+
+        $this->data = $this->cloneVar($this->data);
+    }
+
+    /**
+     * Sets the called listeners.
+     *
+     * @param array $listeners An array of called listeners
+     *
+     * @see TraceableEventDispatcher
+     */
+    public function setCalledListeners(array $listeners)
+    {
+        $this->data['called_listeners'] = $listeners;
     }
 
     /**
@@ -48,7 +87,7 @@ class EventDataCollector extends DataCollector
      *
      * @return array An array of called listeners
      *
-     * @see TraceableEventDispatcherInterface
+     * @see TraceableEventDispatcher
      */
     public function getCalledListeners()
     {
@@ -56,15 +95,49 @@ class EventDataCollector extends DataCollector
     }
 
     /**
+     * Sets the not called listeners.
+     *
+     * @see TraceableEventDispatcher
+     */
+    public function setNotCalledListeners(array $listeners)
+    {
+        $this->data['not_called_listeners'] = $listeners;
+    }
+
+    /**
      * Gets the not called listeners.
      *
-     * @return array An array of not called listeners
+     * @return array
      *
-     * @see TraceableEventDispatcherInterface
+     * @see TraceableEventDispatcher
      */
     public function getNotCalledListeners()
     {
         return $this->data['not_called_listeners'];
+    }
+
+    /**
+     * Sets the orphaned events.
+     *
+     * @param array $events An array of orphaned events
+     *
+     * @see TraceableEventDispatcher
+     */
+    public function setOrphanedEvents(array $events)
+    {
+        $this->data['orphaned_events'] = $events;
+    }
+
+    /**
+     * Gets the orphaned events.
+     *
+     * @return array An array of orphaned events
+     *
+     * @see TraceableEventDispatcher
+     */
+    public function getOrphanedEvents()
+    {
+        return $this->data['orphaned_events'];
     }
 
     /**

@@ -15,41 +15,33 @@ namespace Symfony\Component\Templating;
  * Internal representation of a template.
  *
  * @author Victor Berchet <victor@suumit.com>
- *
- * @api
  */
 class TemplateReference implements TemplateReferenceInterface
 {
     protected $parameters;
 
-    public function __construct($name = null, $engine = null)
+    public function __construct(string $name = null, string $engine = null)
     {
-        $this->parameters = array(
-            'name'   => $name,
+        $this->parameters = [
+            'name' => $name,
             'engine' => $engine,
-        );
+        ];
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function __toString()
     {
         return $this->getLogicalName();
     }
 
     /**
-     * Sets a template parameter.
-     *
-     * @param string $name   The parameter name
-     * @param string $value  The parameter value
-     *
-     * @return TemplateReferenceInterface The TemplateReferenceInterface instance
-     *
-     * @throws  \InvalidArgumentException if the parameter is not defined
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function set($name, $value)
+    public function set(string $name, string $value)
     {
-        if (array_key_exists($name, $this->parameters)) {
+        if (\array_key_exists($name, $this->parameters)) {
             $this->parameters[$name] = $value;
         } else {
             throw new \InvalidArgumentException(sprintf('The template does not support the "%s" parameter.', $name));
@@ -59,19 +51,11 @@ class TemplateReference implements TemplateReferenceInterface
     }
 
     /**
-     * Gets a template parameter.
-     *
-     * @param string $name The parameter name
-     *
-     * @return string The parameter value
-     *
-     * @throws  \InvalidArgumentException if the parameter is not defined
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function get($name)
+    public function get(string $name)
     {
-        if (array_key_exists($name, $this->parameters)) {
+        if (\array_key_exists($name, $this->parameters)) {
             return $this->parameters[$name];
         }
 
@@ -79,11 +63,7 @@ class TemplateReference implements TemplateReferenceInterface
     }
 
     /**
-     * Gets the template parameters.
-     *
-     * @return array An array of parameters
-     *
-     * @api
+     * {@inheritdoc}
      */
     public function all()
     {
@@ -91,13 +71,7 @@ class TemplateReference implements TemplateReferenceInterface
     }
 
     /**
-     * Returns the path to the template.
-     *
-     * By default, it just returns the template name.
-     *
-     * @return string A path to the template or a resource
-     *
-     * @api
+     * {@inheritdoc}
      */
     public function getPath()
     {
@@ -105,13 +79,7 @@ class TemplateReference implements TemplateReferenceInterface
     }
 
     /**
-     * Returns the "logical" template name.
-     *
-     * The template name acts as a unique identifier for the template.
-     *
-     * @return string The template name
-     *
-     * @api
+     * {@inheritdoc}
      */
     public function getLogicalName()
     {

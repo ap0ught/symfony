@@ -11,25 +11,61 @@
 
 namespace Symfony\Bundle\FrameworkBundle\Controller;
 
-use Symfony\Component\DependencyInjection\ContainerAware;
 use Symfony\Component\HttpFoundation\Response;
+use Twig\Environment;
 
 /**
  * TemplateController.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class TemplateController extends ContainerAware
+class TemplateController
 {
+    private $twig;
+
+    public function __construct(Environment $twig = null)
+    {
+        $this->twig = $twig;
+    }
+
     /**
      * Renders a template.
      *
-     * @param string $template The template name
-     *
-     * @return Response A Response instance
+     * @param string    $template  The template name
+     * @param int|null  $maxAge    Max age for client caching
+     * @param int|null  $sharedAge Max age for shared (proxy) caching
+     * @param bool|null $private   Whether or not caching should apply for client caches only
+     * @param array     $context   The context (arguments) of the template
      */
-    public function templateAction($template)
+    public function templateAction(string $template, int $maxAge = null, int $sharedAge = null, bool $private = null, array $context = []): Response
     {
-        return $this->container->get('templating')->renderResponse($template);
+        if (null === $this->twig) {
+            throw new \LogicException('You can not use the TemplateController if the Twig Bundle is not available.');
+        }
+
+        $response = new Response($this->twig->render($template, $context));
+
+        if ($maxAge) {
+            $response->setMaxAge($maxAge);
+        }
+
+        if (null !== $sharedAge) {
+            $response->setSharedMaxAge($sharedAge);
+        }
+
+        if ($private) {
+            $response->setPrivate();
+        } elseif (false === $private || (null === $private && (null !== $maxAge || null !== $sharedAge))) {
+            $response->setPublic();
+        }
+
+        return $response;
+    }
+
+    public function __invoke(string $template, int $maxAge = null, int $sharedAge = null, bool $private = null, array $context = []): Response
+    {
+        return $this->templateAction($template, $maxAge, $sharedAge, $private, $context);
     }
 }

@@ -17,29 +17,21 @@ use Symfony\Component\Routing\RouteCollection;
  * GeneratorDumperInterface is the interface that all generator dumper classes must implement.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 interface GeneratorDumperInterface
 {
     /**
-     * Dumps a set of routes to a PHP class.
+     * Dumps a set of routes to a string representation of executable code
+     * that can then be used to generate a URL of such a route.
      *
-     * Available options:
-     *
-     *  * class:      The class name
-     *  * base_class: The base class name
-     *
-     * @param  array  $options An array of options
-     *
-     * @return string A PHP class representing the generator class
+     * @return string Executable code
      */
-    function dump(array $options = array());
+    public function dump(array $options = []);
 
     /**
      * Gets the routes to dump.
      *
      * @return RouteCollection A RouteCollection instance
      */
-    function getRoutes();
+    public function getRoutes();
 }

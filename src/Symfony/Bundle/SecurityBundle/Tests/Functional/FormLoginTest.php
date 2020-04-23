@@ -1,28 +1,24 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Bundle\SecurityBundle\Tests\Functional;
 
-/**
- * @group functional
- */
-class FormLoginTest extends WebTestCase
+class FormLoginTest extends AbstractWebTestCase
 {
     /**
      * @dataProvider getConfigs
      */
     public function testFormLogin($config)
     {
-        $client = $this->createClient(array('test_case' => 'StandardFormLogin', 'root_config' => $config));
-        $client->insulate();
+        $client = $this->createClient(['test_case' => 'StandardFormLogin', 'root_config' => $config]);
 
         $form = $client->request('GET', '/login')->selectButton('login')->form();
         $form['_username'] = 'johannes';
@@ -31,9 +27,42 @@ class FormLoginTest extends WebTestCase
 
         $this->assertRedirect($client->getResponse(), '/profile');
 
-        $text = $client->followRedirect()->text();
-        $this->assertContains('Hello johannes!', $text);
-        $this->assertContains('You\'re browsing to path "/profile".', $text);
+        $text = $client->followRedirect()->text(null, true);
+        $this->assertStringContainsString('Hello johannes!', $text);
+        $this->assertStringContainsString('You\'re browsing to path "/profile".', $text);
+    }
+
+    /**
+     * @dataProvider getConfigs
+     */
+    public function testFormLogout($config)
+    {
+        $client = $this->createClient(['test_case' => 'StandardFormLogin', 'root_config' => $config]);
+
+        $form = $client->request('GET', '/login')->selectButton('login')->form();
+        $form['_username'] = 'johannes';
+        $form['_password'] = 'test';
+        $client->submit($form);
+
+        $this->assertRedirect($client->getResponse(), '/profile');
+
+        $crawler = $client->followRedirect();
+        $text = $crawler->text(null, true);
+
+        $this->assertStringContainsString('Hello johannes!', $text);
+        $this->assertStringContainsString('You\'re browsing to path "/profile".', $text);
+
+        $logoutLinks = $crawler->selectLink('Log out')->links();
+        $this->assertCount(6, $logoutLinks);
+        $this->assertSame($logoutLinks[0]->getUri(), $logoutLinks[1]->getUri());
+        $this->assertSame($logoutLinks[2]->getUri(), $logoutLinks[3]->getUri());
+        $this->assertSame($logoutLinks[4]->getUri(), $logoutLinks[5]->getUri());
+
+        $this->assertNotSame($logoutLinks[0]->getUri(), $logoutLinks[2]->getUri());
+        $this->assertNotSame($logoutLinks[1]->getUri(), $logoutLinks[3]->getUri());
+
+        $this->assertSame($logoutLinks[0]->getUri(), $logoutLinks[4]->getUri());
+        $this->assertSame($logoutLinks[1]->getUri(), $logoutLinks[5]->getUri());
     }
 
     /**
@@ -41,8 +70,7 @@ class FormLoginTest extends WebTestCase
      */
     public function testFormLoginWithCustomTargetPath($config)
     {
-        $client = $this->createClient(array('test_case' => 'StandardFormLogin', 'root_config' => $config));
-        $client->insulate();
+        $client = $this->createClient(['test_case' => 'StandardFormLogin', 'root_config' => $config]);
 
         $form = $client->request('GET', '/login')->selectButton('login')->form();
         $form['_username'] = 'johannes';
@@ -52,9 +80,9 @@ class FormLoginTest extends WebTestCase
 
         $this->assertRedirect($client->getResponse(), '/foo');
 
-        $text = $client->followRedirect()->text();
-        $this->assertContains('Hello johannes!', $text);
-        $this->assertContains('You\'re browsing to path "/foo".', $text);
+        $text = $client->followRedirect()->text(null, true);
+        $this->assertStringContainsString('Hello johannes!', $text);
+        $this->assertStringContainsString('You\'re browsing to path "/foo".', $text);
     }
 
     /**
@@ -62,42 +90,27 @@ class FormLoginTest extends WebTestCase
      */
     public function testFormLoginRedirectsToProtectedResourceAfterLogin($config)
     {
-        $client = $this->createClient(array('test_case' => 'StandardFormLogin', 'root_config' => $config));
-        $client->insulate();
+        $client = $this->createClient(['test_case' => 'StandardFormLogin', 'root_config' => $config]);
 
-        $client->request('GET', '/protected-resource');
+        $client->request('GET', '/protected_resource');
         $this->assertRedirect($client->getResponse(), '/login');
 
         $form = $client->followRedirect()->selectButton('login')->form();
         $form['_username'] = 'johannes';
         $form['_password'] = 'test';
         $client->submit($form);
-        $this->assertRedirect($client->getResponse(), '/protected-resource');
+        $this->assertRedirect($client->getResponse(), '/protected_resource');
 
-        $text = $client->followRedirect()->text();
-        $this->assertContains('Hello johannes!', $text);
-        $this->assertContains('You\'re browsing to path "/protected-resource".', $text);
+        $text = $client->followRedirect()->text(null, true);
+        $this->assertStringContainsString('Hello johannes!', $text);
+        $this->assertStringContainsString('You\'re browsing to path "/protected_resource".', $text);
     }
 
     public function getConfigs()
     {
-        return array(
-            array('config.yml'),
-            array('routes_as_path.yml'),
-        );
-    }
-
-    protected function setUp()
-    {
-        parent::setUp();
-
-        $this->deleteTmpDir('StandardFormLogin');
-    }
-
-    protected function tearDown()
-    {
-        parent::tearDown();
-
-        $this->deleteTmpDir('StandardFormLogin');
+        return [
+            ['config.yml'],
+            ['routes_as_path.yml'],
+        ];
     }
 }

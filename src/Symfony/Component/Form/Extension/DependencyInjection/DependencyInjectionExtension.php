@@ -11,75 +11,97 @@
 
 namespace Symfony\Component\Form\Extension\DependencyInjection;
 
+use Psr\Container\ContainerInterface;
+use Symfony\Component\Form\Exception\InvalidArgumentException;
 use Symfony\Component\Form\FormExtensionInterface;
 use Symfony\Component\Form\FormTypeGuesserChain;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class DependencyInjectionExtension implements FormExtensionInterface
 {
-    private $container;
-
-    private $typeServiceIds;
-
-    private $guesserServiceIds;
-
     private $guesser;
-
     private $guesserLoaded = false;
+    private $typeContainer;
+    private $typeExtensionServices;
+    private $guesserServices;
 
-    public function __construct(ContainerInterface $container,
-        array $typeServiceIds, array $typeExtensionServiceIds,
-        array $guesserServiceIds)
+    /**
+     * @param iterable[] $typeExtensionServices
+     */
+    public function __construct(ContainerInterface $typeContainer, array $typeExtensionServices, iterable $guesserServices)
     {
-        $this->container = $container;
-        $this->typeServiceIds = $typeServiceIds;
-        $this->typeExtensionServiceIds = $typeExtensionServiceIds;
-        $this->guesserServiceIds = $guesserServiceIds;
+        $this->typeContainer = $typeContainer;
+        $this->typeExtensionServices = $typeExtensionServices;
+        $this->guesserServices = $guesserServices;
     }
 
-    public function getType($name)
+    /**
+     * {@inheritdoc}
+     */
+    public function getType(string $name)
     {
-        if (!isset($this->typeServiceIds[$name])) {
-            throw new \InvalidArgumentException(sprintf('The field type "%s" is not registered with the service container.', $name));
+        if (!$this->typeContainer->has($name)) {
+            throw new InvalidArgumentException(sprintf('The field type "%s" is not registered in the service container.', $name));
         }
 
-        return $this->container->get($this->typeServiceIds[$name]);
+        return $this->typeContainer->get($name);
     }
 
-    public function hasType($name)
+    /**
+     * {@inheritdoc}
+     */
+    public function hasType(string $name)
     {
-        return isset($this->typeServiceIds[$name]);
+        return $this->typeContainer->has($name);
     }
 
-    public function getTypeExtensions($name)
+    /**
+     * {@inheritdoc}
+     */
+    public function getTypeExtensions(string $name)
     {
-        $extensions = array();
+        $extensions = [];
 
-        if (isset($this->typeExtensionServiceIds[$name])) {
-            foreach ($this->typeExtensionServiceIds[$name] as $serviceId) {
-                $extensions[] = $this->container->get($serviceId);
+        if (isset($this->typeExtensionServices[$name])) {
+            foreach ($this->typeExtensionServices[$name] as $serviceId => $extension) {
+                $extensions[] = $extension;
+
+                $extendedTypes = [];
+                foreach ($extension::getExtendedTypes() as $extendedType) {
+                    $extendedTypes[] = $extendedType;
+                }
+
+                // validate the result of getExtendedTypes() to ensure it is consistent with the service definition
+                if (!\in_array($name, $extendedTypes, true)) {
+                    throw new InvalidArgumentException(sprintf('The extended type specified for the service "%s" does not match the actual extended type. Expected "%s", given "%s".', $serviceId, $name, implode(', ', $extendedTypes)));
+                }
             }
         }
 
         return $extensions;
     }
 
-    public function hasTypeExtensions($name)
+    /**
+     * {@inheritdoc}
+     */
+    public function hasTypeExtensions(string $name)
     {
-        return isset($this->typeExtensionServiceIds[$name]);
+        return isset($this->typeExtensionServices[$name]);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getTypeGuesser()
     {
         if (!$this->guesserLoaded) {
             $this->guesserLoaded = true;
-            $guessers = array();
+            $guessers = [];
 
-            foreach ($this->guesserServiceIds as $serviceId) {
-                $guessers[] = $this->container->get($serviceId);
+            foreach ($this->guesserServices as $serviceId => $service) {
+                $guessers[] = $service;
             }
 
-            if (count($guessers) > 0) {
+            if ($guessers) {
                 $this->guesser = new FormTypeGuesserChain($guessers);
             }
         }

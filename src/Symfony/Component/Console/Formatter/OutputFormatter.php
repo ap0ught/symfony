@@ -11,63 +11,80 @@
 
 namespace Symfony\Component\Console\Formatter;
 
+use Symfony\Component\Console\Exception\InvalidArgumentException;
+
 /**
  * Formatter class for console output.
  *
  * @author Konstantin Kudryashov <ever.zet@gmail.com>
- *
- * @api
+ * @author Roland Franssen <franssen.roland@gmail.com>
  */
-class OutputFormatter implements OutputFormatterInterface
+class OutputFormatter implements WrappableOutputFormatterInterface
 {
-    /**
-     * The pattern to phrase the format.
-     */
-    const FORMAT_PATTERN = '#<([a-z][a-z0-9_=;-]+)>(.*?)</\\1?>#is';
-
     private $decorated;
-    private $styles = array();
+    private $styles = [];
+    private $styleStack;
+
+    /**
+     * Escapes "<" special char in given text.
+     *
+     * @return string Escaped text
+     */
+    public static function escape(string $text)
+    {
+        $text = preg_replace('/([^\\\\]?)</', '$1\\<', $text);
+
+        return self::escapeTrailingBackslash($text);
+    }
+
+    /**
+     * Escapes trailing "\" in given text.
+     *
+     * @internal
+     */
+    public static function escapeTrailingBackslash(string $text): string
+    {
+        if ('\\' === substr($text, -1)) {
+            $len = \strlen($text);
+            $text = rtrim($text, '\\');
+            $text = str_replace("\0", '', $text);
+            $text .= str_repeat("\0", $len - \strlen($text));
+        }
+
+        return $text;
+    }
 
     /**
      * Initializes console output formatter.
      *
-     * @param   Boolean $decorated  Whether this formatter should actually decorate strings
-     * @param   array   $styles     Array of "name => FormatterStyle" instance
-     *
-     * @api
+     * @param OutputFormatterStyleInterface[] $styles Array of "name => FormatterStyle" instances
      */
-    public function __construct($decorated = null, array $styles = array())
+    public function __construct(bool $decorated = false, array $styles = [])
     {
-        $this->decorated = (Boolean) $decorated;
+        $this->decorated = $decorated;
 
-        $this->setStyle('error',    new OutputFormatterStyle('white', 'red'));
-        $this->setStyle('info',     new OutputFormatterStyle('green'));
-        $this->setStyle('comment',  new OutputFormatterStyle('yellow'));
+        $this->setStyle('error', new OutputFormatterStyle('white', 'red'));
+        $this->setStyle('info', new OutputFormatterStyle('green'));
+        $this->setStyle('comment', new OutputFormatterStyle('yellow'));
         $this->setStyle('question', new OutputFormatterStyle('black', 'cyan'));
 
         foreach ($styles as $name => $style) {
             $this->setStyle($name, $style);
         }
+
+        $this->styleStack = new OutputFormatterStyleStack();
     }
 
     /**
-     * Sets the decorated flag.
-     *
-     * @param Boolean $decorated Whether to decorated the messages or not
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function setDecorated($decorated)
+    public function setDecorated(bool $decorated)
     {
-        $this->decorated = (Boolean) $decorated;
+        $this->decorated = $decorated;
     }
 
     /**
-     * Gets the decorated flag.
-     *
-     * @return Boolean true if the output will decorate messages, false otherwise
-     *
-     * @api
+     * {@inheritdoc}
      */
     public function isDecorated()
     {
@@ -75,116 +92,184 @@ class OutputFormatter implements OutputFormatterInterface
     }
 
     /**
-     * Sets a new style.
-     *
-     * @param string                        $name  The style name
-     * @param OutputFormatterStyleInterface $style The style instance
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function setStyle($name, OutputFormatterStyleInterface $style)
+    public function setStyle(string $name, OutputFormatterStyleInterface $style)
     {
         $this->styles[strtolower($name)] = $style;
     }
 
     /**
-     * Checks if output formatter has style with specified name.
-     *
-     * @param   string  $name
-     *
-     * @return  Boolean
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function hasStyle($name)
+    public function hasStyle(string $name)
     {
         return isset($this->styles[strtolower($name)]);
     }
 
     /**
-     * Gets style options from style with specified name.
-     *
-     * @param   string  $name
-     *
-     * @return  OutputFormatterStyleInterface
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function getStyle($name)
+    public function getStyle(string $name)
     {
         if (!$this->hasStyle($name)) {
-            throw new \InvalidArgumentException('Undefined style: '.$name);
+            throw new InvalidArgumentException(sprintf('Undefined style: "%s".', $name));
         }
 
         return $this->styles[strtolower($name)];
     }
 
     /**
-     * Formats a message according to the given styles.
-     *
-     * @param  string $message The message to style
-     *
-     * @return string The styled message
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function format($message)
+    public function format(?string $message)
     {
-        return preg_replace_callback(self::FORMAT_PATTERN, array($this, 'replaceStyle'), $message);
+        return $this->formatAndWrap($message, 0);
     }
 
     /**
-     * Replaces style of the output.
-     *
-     * @param array $match
-     *
-     * @return string The replaced style
+     * {@inheritdoc}
      */
-    private function replaceStyle($match)
+    public function formatAndWrap(?string $message, int $width)
     {
-        if (!$this->isDecorated()) {
-            return $match[2];
-        }
+        $offset = 0;
+        $output = '';
+        $tagRegex = '[a-z][^<>]*+';
+        $currentLineLength = 0;
+        preg_match_all("#<(($tagRegex) | /($tagRegex)?)>#ix", $message, $matches, PREG_OFFSET_CAPTURE);
+        foreach ($matches[0] as $i => $match) {
+            $pos = $match[1];
+            $text = $match[0];
 
-        if (isset($this->styles[strtolower($match[1])])) {
-            $style = $this->styles[strtolower($match[1])];
-        } else {
-            $style = $this->createStyleFromString($match[1]);
+            if (0 != $pos && '\\' == $message[$pos - 1]) {
+                continue;
+            }
 
-            if (false === $style) {
-                return $match[0];
+            // add the text up to the next tag
+            $output .= $this->applyCurrentStyle(substr($message, $offset, $pos - $offset), $output, $width, $currentLineLength);
+            $offset = $pos + \strlen($text);
+
+            // opening tag?
+            if ($open = '/' != $text[1]) {
+                $tag = $matches[1][$i][0];
+            } else {
+                $tag = isset($matches[3][$i][0]) ? $matches[3][$i][0] : '';
+            }
+
+            if (!$open && !$tag) {
+                // </>
+                $this->styleStack->pop();
+            } elseif (null === $style = $this->createStyleFromString($tag)) {
+                $output .= $this->applyCurrentStyle($text, $output, $width, $currentLineLength);
+            } elseif ($open) {
+                $this->styleStack->push($style);
+            } else {
+                $this->styleStack->pop($style);
             }
         }
 
-        return $style->apply($this->format($match[2]));
+        $output .= $this->applyCurrentStyle(substr($message, $offset), $output, $width, $currentLineLength);
+
+        if (false !== strpos($output, "\0")) {
+            return strtr($output, ["\0" => '\\', '\\<' => '<']);
+        }
+
+        return str_replace('\\<', '<', $output);
+    }
+
+    /**
+     * @return OutputFormatterStyleStack
+     */
+    public function getStyleStack()
+    {
+        return $this->styleStack;
     }
 
     /**
      * Tries to create new style instance from string.
-     *
-     * @param   string  $string
-     *
-     * @return  Symfony\Component\Console\Format\FormatterStyle|Boolean false if string is not format string
      */
-    private function createStyleFromString($string)
+    private function createStyleFromString(string $string): ?OutputFormatterStyleInterface
     {
-        if (!preg_match_all('/([^=]+)=([^;]+)(;|$)/', strtolower($string), $matches, PREG_SET_ORDER)) {
-            return false;
+        if (isset($this->styles[$string])) {
+            return $this->styles[$string];
+        }
+
+        if (!preg_match_all('/([^=]+)=([^;]+)(;|$)/', $string, $matches, PREG_SET_ORDER)) {
+            return null;
         }
 
         $style = new OutputFormatterStyle();
         foreach ($matches as $match) {
             array_shift($match);
+            $match[0] = strtolower($match[0]);
 
             if ('fg' == $match[0]) {
-                $style->setForeground($match[1]);
+                $style->setForeground(strtolower($match[1]));
             } elseif ('bg' == $match[0]) {
-                $style->setBackground($match[1]);
+                $style->setBackground(strtolower($match[1]));
+            } elseif ('href' === $match[0]) {
+                $style->setHref($match[1]);
+            } elseif ('options' === $match[0]) {
+                preg_match_all('([^,;]+)', strtolower($match[1]), $options);
+                $options = array_shift($options);
+                foreach ($options as $option) {
+                    $style->setOption($option);
+                }
             } else {
-                $style->setOption($match[1]);
+                return null;
             }
         }
 
         return $style;
+    }
+
+    /**
+     * Applies current style from stack to text, if must be applied.
+     */
+    private function applyCurrentStyle(string $text, string $current, int $width, int &$currentLineLength): string
+    {
+        if ('' === $text) {
+            return '';
+        }
+
+        if (!$width) {
+            return $this->isDecorated() ? $this->styleStack->getCurrent()->apply($text) : $text;
+        }
+
+        if (!$currentLineLength && '' !== $current) {
+            $text = ltrim($text);
+        }
+
+        if ($currentLineLength) {
+            $prefix = substr($text, 0, $i = $width - $currentLineLength)."\n";
+            $text = substr($text, $i);
+        } else {
+            $prefix = '';
+        }
+
+        preg_match('~(\\n)$~', $text, $matches);
+        $text = $prefix.preg_replace('~([^\\n]{'.$width.'})\\ *~', "\$1\n", $text);
+        $text = rtrim($text, "\n").($matches[1] ?? '');
+
+        if (!$currentLineLength && '' !== $current && "\n" !== substr($current, -1)) {
+            $text = "\n".$text;
+        }
+
+        $lines = explode("\n", $text);
+
+        foreach ($lines as $line) {
+            $currentLineLength += \strlen($line);
+            if ($width <= $currentLineLength) {
+                $currentLineLength = 0;
+            }
+        }
+
+        if ($this->isDecorated()) {
+            foreach ($lines as $i => $line) {
+                $lines[$i] = $this->styleStack->getCurrent()->apply($line);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 }

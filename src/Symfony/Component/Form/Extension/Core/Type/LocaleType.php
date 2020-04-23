@@ -12,32 +12,46 @@
 namespace Symfony\Component\Form\Extension\Core\Type;
 
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Locale\Locale;
+use Symfony\Component\Form\ChoiceList\ChoiceList;
+use Symfony\Component\Form\ChoiceList\Loader\IntlCallbackChoiceLoader;
+use Symfony\Component\Intl\Locales;
+use Symfony\Component\OptionsResolver\Options;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
 class LocaleType extends AbstractType
 {
     /**
      * {@inheritdoc}
      */
-    public function getDefaultOptions(array $options)
+    public function configureOptions(OptionsResolver $resolver)
     {
-        return array(
-            'choices' => Locale::getDisplayLocales(\Locale::getDefault()),
-        );
+        $resolver->setDefaults([
+            'choice_loader' => function (Options $options) {
+                $choiceTranslationLocale = $options['choice_translation_locale'];
+
+                return ChoiceList::loader($this, new IntlCallbackChoiceLoader(function () use ($choiceTranslationLocale) {
+                    return array_flip(Locales::getNames($choiceTranslationLocale));
+                }), $choiceTranslationLocale);
+            },
+            'choice_translation_domain' => false,
+            'choice_translation_locale' => null,
+        ]);
+
+        $resolver->setAllowedTypes('choice_translation_locale', ['null', 'string']);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getParent(array $options)
+    public function getParent()
     {
-        return 'choice';
+        return ChoiceType::class;
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getName()
+    public function getBlockPrefix()
     {
         return 'locale';
     }

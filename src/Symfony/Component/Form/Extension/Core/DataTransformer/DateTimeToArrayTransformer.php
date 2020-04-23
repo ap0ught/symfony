@@ -12,12 +12,11 @@
 namespace Symfony\Component\Form\Extension\Core\DataTransformer;
 
 use Symfony\Component\Form\Exception\TransformationFailedException;
-use Symfony\Component\Form\Exception\UnexpectedTypeException;
 
 /**
  * Transforms between a normalized time and a localized time string/array.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
+ * @author Bernhard Schussek <bschussek@gmail.com>
  * @author Florian Eckerstorfer <florian@eckerstorfer.org>
  */
 class DateTimeToArrayTransformer extends BaseDateTimeTransformer
@@ -25,79 +24,77 @@ class DateTimeToArrayTransformer extends BaseDateTimeTransformer
     private $pad;
 
     private $fields;
+    private $referenceDate;
 
     /**
-     * Constructor.
-     *
-     * @param string  $inputTimezone    The input timezone
-     * @param string  $outputTimezone   The output timezone
-     * @param array   $fields           The date fields
-     * @param Boolean $pad              Whether to use padding
-     *
-     * @throws UnexpectedTypeException if a timezone is not a string
+     * @param string $inputTimezone  The input timezone
+     * @param string $outputTimezone The output timezone
+     * @param array  $fields         The date fields
+     * @param bool   $pad            Whether to use padding
      */
-    public function __construct($inputTimezone = null, $outputTimezone = null, array $fields = null, $pad = false)
+    public function __construct(string $inputTimezone = null, string $outputTimezone = null, array $fields = null, bool $pad = false, \DateTimeInterface $referenceDate = null)
     {
         parent::__construct($inputTimezone, $outputTimezone);
 
         if (null === $fields) {
-            $fields = array('year', 'month', 'day', 'hour', 'minute', 'second');
+            $fields = ['year', 'month', 'day', 'hour', 'minute', 'second'];
         }
 
         $this->fields = $fields;
-        $this->pad = (Boolean) $pad;
+        $this->pad = $pad;
+        $this->referenceDate = $referenceDate ?: new \DateTimeImmutable('1970-01-01 00:00:00');
     }
 
     /**
      * Transforms a normalized date into a localized date.
      *
-     * @param  DateTime $dateTime  Normalized date.
+     * @param \DateTimeInterface $dateTime A DateTimeInterface object
      *
-     * @return array               Localized date.
+     * @return array Localized date
      *
-     * @throws UnexpectedTypeException if the given value is not an instance of \DateTime
-     * @throws TransformationFailedException if the output timezone is not supported
+     * @throws TransformationFailedException If the given value is not a \DateTimeInterface
      */
     public function transform($dateTime)
     {
         if (null === $dateTime) {
-            return array_intersect_key(array(
-                'year'    => '',
-                'month'   => '',
-                'day'     => '',
-                'hour'    => '',
-                'minute'  => '',
-                'second'  => '',
-            ), array_flip($this->fields));
+            return array_intersect_key([
+                'year' => '',
+                'month' => '',
+                'day' => '',
+                'hour' => '',
+                'minute' => '',
+                'second' => '',
+            ], array_flip($this->fields));
         }
 
-        if (!$dateTime instanceof \DateTime) {
-            throw new UnexpectedTypeException($dateTime, '\DateTime');
+        if (!$dateTime instanceof \DateTimeInterface) {
+            throw new TransformationFailedException('Expected a \DateTimeInterface.');
         }
 
-        $dateTime = clone $dateTime;
         if ($this->inputTimezone !== $this->outputTimezone) {
-            try {
-                $dateTime->setTimezone(new \DateTimeZone($this->outputTimezone));
-            } catch (\Exception $e) {
-                throw new TransformationFailedException($e->getMessage(), $e->getCode(), $e);
+            if (!$dateTime instanceof \DateTimeImmutable) {
+                $dateTime = clone $dateTime;
             }
+
+            $dateTime = $dateTime->setTimezone(new \DateTimeZone($this->outputTimezone));
         }
 
-        $result = array_intersect_key(array(
-            'year'    => $dateTime->format('Y'),
-            'month'   => $dateTime->format('m'),
-            'day'     => $dateTime->format('d'),
-            'hour'    => $dateTime->format('H'),
-            'minute'  => $dateTime->format('i'),
-            'second'  => $dateTime->format('s'),
-        ), array_flip($this->fields));
+        $result = array_intersect_key([
+            'year' => $dateTime->format('Y'),
+            'month' => $dateTime->format('m'),
+            'day' => $dateTime->format('d'),
+            'hour' => $dateTime->format('H'),
+            'minute' => $dateTime->format('i'),
+            'second' => $dateTime->format('s'),
+        ], array_flip($this->fields));
 
         if (!$this->pad) {
             foreach ($result as &$entry) {
                 // remove leading zeros
                 $entry = (string) (int) $entry;
             }
+            // unset reference to keep scope clear
+            unset($entry);
         }
 
         return $result;
@@ -106,13 +103,12 @@ class DateTimeToArrayTransformer extends BaseDateTimeTransformer
     /**
      * Transforms a localized date into a normalized date.
      *
-     * @param  array $value  Localized date
+     * @param array $value Localized date
      *
-     * @return DateTime      Normalized date
+     * @return \DateTime|null Normalized date
      *
-     * @throws UnexpectedTypeException if the given value is not an array
-     * @throws TransformationFailedException if the value could not bet transformed
-     * @throws TransformationFailedException if the input timezone is not supported
+     * @throws TransformationFailedException If the given value is not an array,
+     *                                       if the value could not be transformed
      */
     public function reverseTransform($value)
     {
@@ -120,15 +116,15 @@ class DateTimeToArrayTransformer extends BaseDateTimeTransformer
             return null;
         }
 
-        if (!is_array($value)) {
-            throw new UnexpectedTypeException($value, 'array');
+        if (!\is_array($value)) {
+            throw new TransformationFailedException('Expected an array.');
         }
 
-        if (implode('', $value) === '') {
+        if ('' === implode('', $value)) {
             return null;
         }
 
-        $emptyFields = array();
+        $emptyFields = [];
 
         foreach ($this->fields as $field) {
             if (!isset($value[$field])) {
@@ -136,27 +132,50 @@ class DateTimeToArrayTransformer extends BaseDateTimeTransformer
             }
         }
 
-        if (count($emptyFields) > 0) {
-            throw new TransformationFailedException(
-                sprintf('The fields "%s" should not be empty', implode('", "', $emptyFields)
-            ));
+        if (\count($emptyFields) > 0) {
+            throw new TransformationFailedException(sprintf('The fields "%s" should not be empty.', implode('", "', $emptyFields)));
+        }
+
+        if (isset($value['month']) && !ctype_digit((string) $value['month'])) {
+            throw new TransformationFailedException('This month is invalid.');
+        }
+
+        if (isset($value['day']) && !ctype_digit((string) $value['day'])) {
+            throw new TransformationFailedException('This day is invalid.');
+        }
+
+        if (isset($value['year']) && !ctype_digit((string) $value['year'])) {
+            throw new TransformationFailedException('This year is invalid.');
         }
 
         if (!empty($value['month']) && !empty($value['day']) && !empty($value['year']) && false === checkdate($value['month'], $value['day'], $value['year'])) {
-            throw new TransformationFailedException('This is an invalid date');
+            throw new TransformationFailedException('This is an invalid date.');
+        }
+
+        if (isset($value['hour']) && !ctype_digit((string) $value['hour'])) {
+            throw new TransformationFailedException('This hour is invalid.');
+        }
+
+        if (isset($value['minute']) && !ctype_digit((string) $value['minute'])) {
+            throw new TransformationFailedException('This minute is invalid.');
+        }
+
+        if (isset($value['second']) && !ctype_digit((string) $value['second'])) {
+            throw new TransformationFailedException('This second is invalid.');
         }
 
         try {
             $dateTime = new \DateTime(sprintf(
-                '%s-%s-%s %s:%s:%s %s',
-                empty($value['year']) ? '1970' : $value['year'],
-                empty($value['month']) ? '1' : $value['month'],
-                empty($value['day']) ? '1' : $value['day'],
-                empty($value['hour']) ? '0' : $value['hour'],
-                empty($value['minute']) ? '0' : $value['minute'],
-                empty($value['second']) ? '0' : $value['second'],
-                $this->outputTimezone
-            ));
+                '%s-%s-%s %s:%s:%s',
+                empty($value['year']) ? $this->referenceDate->format('Y') : $value['year'],
+                empty($value['month']) ? $this->referenceDate->format('m') : $value['month'],
+                empty($value['day']) ? $this->referenceDate->format('d') : $value['day'],
+                empty($value['hour']) ? $this->referenceDate->format('H') : $value['hour'],
+                empty($value['minute']) ? $this->referenceDate->format('i') : $value['minute'],
+                empty($value['second']) ? $this->referenceDate->format('s') : $value['second']
+                ),
+                new \DateTimeZone($this->outputTimezone)
+            );
 
             if ($this->inputTimezone !== $this->outputTimezone) {
                 $dateTime->setTimezone(new \DateTimeZone($this->inputTimezone));

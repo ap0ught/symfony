@@ -12,34 +12,26 @@
 namespace Symfony\Component\BrowserKit;
 
 /**
- * Response object.
- *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
-class Response
+final class Response
 {
-    protected $content;
-    protected $status;
-    protected $headers;
+    private $content;
+    private $status;
+    private $headers;
 
     /**
-     * Constructor.
-     *
      * The headers array is a set of key/value pairs. If a header is present multiple times
      * then the value is an array of all the values.
      *
-     * @param string  $content The content of the response
-     * @param integer $status  The response status code
-     * @param array   $headers An array of headers
-     *
-     * @api
+     * @param string $content The content of the response
+     * @param int    $status  The response status code
+     * @param array  $headers An array of headers
      */
-    public function __construct($content = '', $status = 200, array $headers = array())
+    public function __construct(string $content = '', int $status = 200, array $headers = [])
     {
         $this->content = $content;
-        $this->status  = $status;
+        $this->status = $status;
         $this->headers = $headers;
     }
 
@@ -48,15 +40,15 @@ class Response
      *
      * @return string The response with headers and content
      */
-    public function __toString()
+    public function __toString(): string
     {
         $headers = '';
         foreach ($this->headers as $name => $value) {
-            if (is_string($value)) {
-                $headers .= $this->buildHeader($name, $value);
+            if (\is_string($value)) {
+                $headers .= sprintf("%s: %s\n", $name, $value);
             } else {
                 foreach ($value as $headerValue) {
-                    $headers .= $this->buildHeader($name, $headerValue);
+                    $headers .= sprintf("%s: %s\n", $name, $headerValue);
                 }
             }
         }
@@ -65,38 +57,16 @@ class Response
     }
 
     /**
-     * Returns the build header line.
-     *
-     * @param string $name  The header name
-     * @param string $value The header value
-     *
-     * @return string The built header line
-     */
-    protected function buildHeader($name, $value)
-    {
-        return sprintf("%s: %s\n", $name, $value);
-    }
-
-    /**
      * Gets the response content.
      *
      * @return string The response content
-     *
-     * @api
      */
-    public function getContent()
+    public function getContent(): string
     {
         return $this->content;
     }
 
-    /**
-     * Gets the response status code.
-     *
-     * @return integer The response status code
-     *
-     * @api
-     */
-    public function getStatus()
+    public function getStatusCode(): int
     {
         return $this->status;
     }
@@ -105,10 +75,8 @@ class Response
      * Gets the response headers.
      *
      * @return array The response headers
-     *
-     * @api
      */
-    public function getHeaders()
+    public function getHeaders(): array
     {
         return $this->headers;
     }
@@ -116,23 +84,21 @@ class Response
     /**
      * Gets a response header.
      *
-     * @param string  $header The header name
-     * @param Boolean $first  Whether to return the first value or all header values
-     *
      * @return string|array The first header value if $first is true, an array of values otherwise
      */
-    public function getHeader($header, $first = true)
+    public function getHeader(string $header, bool $first = true)
     {
+        $normalizedHeader = str_replace('-', '_', strtolower($header));
         foreach ($this->headers as $key => $value) {
-            if (str_replace('-', '_', strtolower($key)) == str_replace('-', '_', strtolower($header))) {
+            if (str_replace('-', '_', strtolower($key)) === $normalizedHeader) {
                 if ($first) {
-                    return is_array($value) ? (count($value) ? $value[0] : '') : $value;
+                    return \is_array($value) ? (\count($value) ? $value[0] : '') : $value;
                 }
 
-                return is_array($value) ? $value : array($value);
+                return \is_array($value) ? $value : [$value];
             }
         }
 
-        return $first ? null : array();
+        return $first ? null : [];
     }
 }

@@ -12,55 +12,69 @@
 namespace Symfony\Component\Form\Extension\Core\Type;
 
 use Symfony\Component\Form\AbstractType;
-use Symfony\Component\Form\FormBuilder;
+use Symfony\Component\Form\Extension\Core\DataTransformer\NumberToLocalizedStringTransformer;
 use Symfony\Component\Form\Extension\Core\DataTransformer\PercentToLocalizedStringTransformer;
+use Symfony\Component\Form\FormBuilderInterface;
+use Symfony\Component\Form\FormInterface;
+use Symfony\Component\Form\FormView;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
 class PercentType extends AbstractType
 {
     /**
      * {@inheritdoc}
      */
-    public function buildForm(FormBuilder $builder, array $options)
+    public function buildForm(FormBuilderInterface $builder, array $options)
     {
-        $builder->appendClientTransformer(new PercentToLocalizedStringTransformer($options['precision'], $options['type']));
+        $builder->addViewTransformer(new PercentToLocalizedStringTransformer(
+            $options['scale'],
+            $options['type'],
+            $options['rounding_mode']
+        ));
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getDefaultOptions(array $options)
+    public function buildView(FormView $view, FormInterface $form, array $options)
     {
-        return array(
-            'precision' => 0,
-            'type'      => 'fractional',
-        );
+        $view->vars['symbol'] = $options['symbol'];
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getAllowedOptionValues(array $options)
+    public function configureOptions(OptionsResolver $resolver)
     {
-        return array(
-            'type' => array(
-                'fractional',
-                'integer',
-            ),
-        );
+        $resolver->setDefaults([
+            'scale' => 0,
+            'rounding_mode' => NumberToLocalizedStringTransformer::ROUND_HALF_UP,
+            'symbol' => '%',
+            'type' => 'fractional',
+            'compound' => false,
+        ]);
+
+        $resolver->setAllowedValues('type', [
+            'fractional',
+            'integer',
+        ]);
+        $resolver->setAllowedValues('rounding_mode', [
+            NumberToLocalizedStringTransformer::ROUND_FLOOR,
+            NumberToLocalizedStringTransformer::ROUND_DOWN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_DOWN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_EVEN,
+            NumberToLocalizedStringTransformer::ROUND_HALF_UP,
+            NumberToLocalizedStringTransformer::ROUND_UP,
+            NumberToLocalizedStringTransformer::ROUND_CEILING,
+        ]);
+        $resolver->setAllowedTypes('scale', 'int');
+        $resolver->setAllowedTypes('symbol', ['bool', 'string']);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function getParent(array $options)
-    {
-        return 'field';
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function getName()
+    public function getBlockPrefix()
     {
         return 'percent';
     }

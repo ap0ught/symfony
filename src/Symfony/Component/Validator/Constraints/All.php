@@ -11,16 +11,15 @@
 
 namespace Symfony\Component\Validator\Constraints;
 
-use Symfony\Component\Validator\Constraint;
-
 /**
  * @Annotation
+ * @Target({"PROPERTY", "METHOD", "ANNOTATION"})
  *
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
-class All extends Constraint
+class All extends Composite
 {
-    public $constraints = array();
+    public $constraints = [];
 
     public function getDefaultOption()
     {
@@ -29,6 +28,11 @@ class All extends Constraint
 
     public function getRequiredOptions()
     {
-        return array('constraints');
+        return ['constraints'];
+    }
+
+    protected function getCompositeOption()
+    {
+        return 'constraints';
     }
 }

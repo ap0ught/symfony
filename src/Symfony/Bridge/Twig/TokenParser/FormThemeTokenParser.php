@@ -12,43 +12,52 @@
 namespace Symfony\Bridge\Twig\TokenParser;
 
 use Symfony\Bridge\Twig\Node\FormThemeNode;
+use Twig\Node\Expression\ArrayExpression;
+use Twig\Node\Node;
+use Twig\Token;
+use Twig\TokenParser\AbstractTokenParser;
 
 /**
- *
+ * Token Parser for the 'form_theme' tag.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class FormThemeTokenParser extends \Twig_TokenParser
+final class FormThemeTokenParser extends AbstractTokenParser
 {
     /**
-     * Parses a token and returns a node.
-     *
-     * @param  \Twig_Token $token A Twig_Token instance
-     *
-     * @return \Twig_NodeInterface A Twig_NodeInterface instance
+     * {@inheritdoc}
      */
-    public function parse(\Twig_Token $token)
+    public function parse(Token $token): Node
     {
         $lineno = $token->getLine();
         $stream = $this->parser->getStream();
 
         $form = $this->parser->getExpressionParser()->parseExpression();
-        $resources = array();
-        do {
-            $resources[] = $this->parser->getExpressionParser()->parseExpression();
-        } while (!$stream->test(\Twig_Token::BLOCK_END_TYPE));
+        $only = false;
 
-        $stream->expect(\Twig_Token::BLOCK_END_TYPE);
+        if ($this->parser->getStream()->test(Token::NAME_TYPE, 'with')) {
+            $this->parser->getStream()->next();
+            $resources = $this->parser->getExpressionParser()->parseExpression();
 
-        return new FormThemeNode($form, new \Twig_Node($resources), $lineno, $this->getTag());
+            if ($this->parser->getStream()->nextIf(Token::NAME_TYPE, 'only')) {
+                $only = true;
+            }
+        } else {
+            $resources = new ArrayExpression([], $stream->getCurrent()->getLine());
+            do {
+                $resources->addElement($this->parser->getExpressionParser()->parseExpression());
+            } while (!$stream->test(Token::BLOCK_END_TYPE));
+        }
+
+        $stream->expect(Token::BLOCK_END_TYPE);
+
+        return new FormThemeNode($form, $resources, $lineno, $this->getTag(), $only);
     }
 
     /**
-     * Gets the tag name associated with this token parser.
-     *
-     * @return string The tag name
+     * {@inheritdoc}
      */
-    public function getTag()
+    public function getTag(): string
     {
         return 'form_theme';
     }

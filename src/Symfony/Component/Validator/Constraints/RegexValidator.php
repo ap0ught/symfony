@@ -14,45 +14,44 @@ namespace Symfony\Component\Validator\Constraints;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
 use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * Validates whether a value match or not given regexp pattern
+ * Validates whether a value match or not given regexp pattern.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
+ * @author Bernhard Schussek <bschussek@gmail.com>
  * @author Joseph Bielawski <stloyd@gmail.com>
- *
- * @api
  */
 class RegexValidator extends ConstraintValidator
 {
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($value, Constraint $constraint)
+    public function validate($value, Constraint $constraint)
     {
-        if (null === $value || '' === $value) {
-            return true;
+        if (!$constraint instanceof Regex) {
+            throw new UnexpectedTypeException($constraint, Regex::class);
         }
 
-        if (!is_scalar($value) && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (null === $value || '' === $value) {
+            return;
+        }
+
+        if (!is_scalar($value) && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
         $value = (string) $value;
 
-        if ($constraint->match xor preg_match($constraint->pattern, $value)) {
-            $this->setMessage($constraint->message, array('{{ value }}' => $value));
-
-            return false;
+        if (null !== $constraint->normalizer) {
+            $value = ($constraint->normalizer)($value);
         }
 
-        return true;
+        if ($constraint->match xor preg_match($constraint->pattern, $value)) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($value))
+                ->setCode(Regex::REGEX_FAILED_ERROR)
+                ->addViolation();
+        }
     }
 }

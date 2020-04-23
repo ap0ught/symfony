@@ -11,19 +11,26 @@
 
 namespace Symfony\Bundle\SecurityBundle\DependencyInjection\Compiler;
 
-use Symfony\Component\DependencyInjection\Reference;
-use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
+use Symfony\Component\DependencyInjection\Compiler\PriorityTaggedServiceTrait;
+use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Exception\LogicException;
+use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\Security\Core\Authorization\Voter\TraceableVoter;
+use Symfony\Component\Security\Core\Authorization\Voter\VoterInterface;
 
 /**
- * Adds all configured security voters to the access decision manager
+ * Adds all configured security voters to the access decision manager.
  *
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
  */
 class AddSecurityVotersPass implements CompilerPassInterface
 {
+    use PriorityTaggedServiceTrait;
+
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function process(ContainerBuilder $container)
     {
@@ -31,15 +38,36 @@ class AddSecurityVotersPass implements CompilerPassInterface
             return;
         }
 
-        $voters = new \SplPriorityQueue();
-        foreach ($container->findTaggedServiceIds('security.voter') as $id => $attributes) {
-            $priority = isset($attributes[0]['priority']) ? $attributes[0]['priority'] : 0;
-            $voters->insert(new Reference($id), $priority);
+        $voters = $this->findAndSortTaggedServices('security.voter', $container);
+        if (!$voters) {
+            throw new LogicException('No security voters found. You need to tag at least one with "security.voter".');
         }
 
-        $voters = iterator_to_array($voters);
-        ksort($voters);
+        $debug = $container->getParameter('kernel.debug');
+        $voterServices = [];
+        foreach ($voters as $voter) {
+            $voterServiceId = (string) $voter;
+            $definition = $container->getDefinition($voterServiceId);
 
-        $container->getDefinition('security.access.decision_manager')->replaceArgument(0, array_values($voters));
+            $class = $container->getParameterBag()->resolveValue($definition->getClass());
+
+            if (!is_a($class, VoterInterface::class, true)) {
+                throw new LogicException(sprintf('"%s" must implement the "%s" when used as a voter.', $class, VoterInterface::class));
+            }
+
+            if ($debug) {
+                $voterServices[] = new Reference($debugVoterServiceId = 'debug.security.voter.'.$voterServiceId);
+
+                $container
+                    ->register($debugVoterServiceId, TraceableVoter::class)
+                    ->addArgument($voter)
+                    ->addArgument(new Reference('event_dispatcher'));
+            } else {
+                $voterServices[] = $voter;
+            }
+        }
+
+        $container->getDefinition('security.access.decision_manager')
+            ->replaceArgument(0, new IteratorArgument($voterServices));
     }
 }

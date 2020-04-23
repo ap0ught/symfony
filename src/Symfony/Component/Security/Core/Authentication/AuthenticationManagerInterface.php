@@ -23,13 +23,11 @@ use Symfony\Component\Security\Core\Exception\AuthenticationException;
 interface AuthenticationManagerInterface
 {
     /**
-     * Attempts to authenticates a TokenInterface object.
-     *
-     * @param TokenInterface $token The TokenInterface instance to authenticate
+     * Attempts to authenticate a TokenInterface object.
      *
      * @return TokenInterface An authenticated TokenInterface instance, never null
      *
      * @throws AuthenticationException if the authentication fails
      */
-    function authenticate(TokenInterface $token);
+    public function authenticate(TokenInterface $token);
 }

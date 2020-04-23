@@ -11,39 +11,32 @@
 
 namespace Symfony\Bridge\Twig\Node;
 
+use Symfony\Component\Form\FormRenderer;
+use Twig\Compiler;
+use Twig\Node\Node;
+
 /**
- *
- *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class FormThemeNode extends \Twig_Node
+final class FormThemeNode extends Node
 {
-    public function __construct(\Twig_NodeInterface $form, \Twig_NodeInterface $resources, $lineno, $tag = null)
+    public function __construct(Node $form, Node $resources, int $lineno, string $tag = null, bool $only = false)
     {
-        parent::__construct(array('form' => $form, 'resources' => $resources), array(), $lineno, $tag);
+        parent::__construct(['form' => $form, 'resources' => $resources], ['only' => $only], $lineno, $tag);
     }
 
-    /**
-     * Compiles the node to PHP.
-     *
-     * @param \Twig_Compiler $compiler A Twig_Compiler instance
-     */
-    public function compile(\Twig_Compiler $compiler)
+    public function compile(Compiler $compiler): void
     {
         $compiler
             ->addDebugInfo($this)
-            ->write('echo $this->env->getExtension(\'form\')->setTheme(')
+            ->write('$this->env->getRuntime(')
+            ->string(FormRenderer::class)
+            ->raw(')->setTheme(')
             ->subcompile($this->getNode('form'))
-            ->raw(', array(')
-        ;
-
-        foreach ($this->getNode('resources') as $resource) {
-            $compiler
-                ->subcompile($resource)
-                ->raw(', ')
-            ;
-        }
-
-        $compiler->raw("));\n");
+            ->raw(', ')
+            ->subcompile($this->getNode('resources'))
+            ->raw(', ')
+            ->raw(false === $this->getAttribute('only') ? 'true' : 'false')
+            ->raw(");\n");
     }
 }

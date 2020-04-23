@@ -12,16 +12,17 @@
 namespace Symfony\Component\HttpKernel\CacheWarmer;
 
 /**
+ * Abstract cache warmer that knows how to write a file to the cache.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
 abstract class CacheWarmer implements CacheWarmerInterface
 {
-    protected function writeCacheFile($file, $content)
+    protected function writeCacheFile(string $file, $content)
     {
-        $tmpFile = tempnam(dirname($file), basename($file));
+        $tmpFile = @tempnam(\dirname($file), basename($file));
         if (false !== @file_put_contents($tmpFile, $content) && @rename($tmpFile, $file)) {
-            chmod($file, 0644);
+            @chmod($file, 0666 & ~umask());
 
             return;
         }

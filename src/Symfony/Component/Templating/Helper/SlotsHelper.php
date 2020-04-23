@@ -15,13 +15,11 @@ namespace Symfony\Component\Templating\Helper;
  * SlotsHelper manages template slots.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 class SlotsHelper extends Helper
 {
-    protected $slots = array();
-    protected $openSlots = array();
+    protected $slots = [];
+    protected $openSlots = [];
 
     /**
      * Starts a new slot.
@@ -29,15 +27,11 @@ class SlotsHelper extends Helper
      * This method starts an output buffer that will be
      * closed when the stop() method is called.
      *
-     * @param string $name  The slot name
-     *
      * @throws \InvalidArgumentException if a slot with the same name is already started
-     *
-     * @api
      */
-    public function start($name)
+    public function start(string $name)
     {
-        if (in_array($name, $this->openSlots)) {
+        if (\in_array($name, $this->openSlots)) {
             throw new \InvalidArgumentException(sprintf('A slot named "%s" is already started.', $name));
         }
 
@@ -52,8 +46,6 @@ class SlotsHelper extends Helper
      * Stops a slot.
      *
      * @throws \LogicException if no slot has been started
-     *
-     * @api
      */
     public function stop()
     {
@@ -69,11 +61,9 @@ class SlotsHelper extends Helper
     /**
      * Returns true if the slot exists.
      *
-     * @param string $name The slot name
-     *
-     * @api
+     * @return bool
      */
-    public function has($name)
+    public function has(string $name)
     {
         return isset($this->slots[$name]);
     }
@@ -81,27 +71,19 @@ class SlotsHelper extends Helper
     /**
      * Gets the slot value.
      *
-     * @param string $name    The slot name
-     * @param string $default The default slot content
+     * @param bool|string $default The default slot content
      *
      * @return string The slot content
-     *
-     * @api
      */
-    public function get($name, $default = false)
+    public function get(string $name, $default = false)
     {
         return isset($this->slots[$name]) ? $this->slots[$name] : $default;
     }
 
     /**
      * Sets a slot value.
-     *
-     * @param string $name    The slot name
-     * @param string $content The slot content
-     *
-     * @api
      */
-    public function set($name, $content)
+    public function set(string $name, string $content)
     {
         $this->slots[$name] = $content;
     }
@@ -109,14 +91,11 @@ class SlotsHelper extends Helper
     /**
      * Outputs a slot.
      *
-     * @param string $name    The slot name
-     * @param string $default The default slot content
+     * @param bool|string $default The default slot content
      *
-     * @return Boolean true if the slot is defined or if a default content has been provided, false otherwise
-     *
-     * @api
+     * @return bool true if the slot is defined or if a default content has been provided, false otherwise
      */
-    public function output($name, $default = false)
+    public function output(string $name, $default = false)
     {
         if (!isset($this->slots[$name])) {
             if (false !== $default) {
@@ -137,8 +116,6 @@ class SlotsHelper extends Helper
      * Returns the canonical name of this helper.
      *
      * @return string The canonical name
-     *
-     * @api
      */
     public function getName()
     {

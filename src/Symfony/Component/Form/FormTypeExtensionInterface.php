@@ -11,70 +11,49 @@
 
 namespace Symfony\Component\Form;
 
+use Symfony\Component\OptionsResolver\OptionsResolver;
+
+/**
+ * @author Bernhard Schussek <bschussek@gmail.com>
+ */
 interface FormTypeExtensionInterface
 {
     /**
      * Builds the form.
      *
-     * This method gets called after the extended type has built the form to
+     * This method is called after the extended type has built the form to
      * further modify it.
      *
      * @see FormTypeInterface::buildForm()
-     *
-     * @param FormBuilder   $builder The form builder
-     * @param array         $options The options
      */
-    function buildForm(FormBuilder $builder, array $options);
+    public function buildForm(FormBuilderInterface $builder, array $options);
 
     /**
      * Builds the view.
      *
-     * This method gets called after the extended type has built the view to
+     * This method is called after the extended type has built the view to
      * further modify it.
      *
      * @see FormTypeInterface::buildView()
-     *
-     * @param FormView      $view The view
-     * @param FormInterface $form The form
      */
-    function buildView(FormView $view, FormInterface $form);
+    public function buildView(FormView $view, FormInterface $form, array $options);
 
     /**
-     * Builds the view.
+     * Finishes the view.
      *
-     * This method gets called after the extended type has built the view to
+     * This method is called after the extended type has finished the view to
      * further modify it.
      *
-     * @see FormTypeInterface::buildViewBottomUp()
-     *
-     * @param FormView      $view The view
-     * @param FormInterface $form The form
+     * @see FormTypeInterface::finishView()
      */
-    function buildViewBottomUp(FormView $view, FormInterface $form);
+    public function finishView(FormView $view, FormInterface $form, array $options);
+
+    public function configureOptions(OptionsResolver $resolver);
 
     /**
-     * Overrides the default options form the extended type.
+     * Gets the extended types.
      *
-     * @param array $options
-     *
-     * @return array
+     * @return string[]
      */
-    function getDefaultOptions(array $options);
-
-    /**
-     * Returns the allowed option values for each option (if any).
-     *
-     * @param array $options
-     *
-     * @return array The allowed option values
-     */
-    function getAllowedOptionValues(array $options);
-
-
-    /**
-     * Returns the name of the type being extended
-     *
-     * @return string The name of the type being extended
-     */
-    function getExtendedType();
+    public static function getExtendedTypes(): iterable;
 }

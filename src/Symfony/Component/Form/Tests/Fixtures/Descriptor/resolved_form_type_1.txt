@@ -1,0 +1,50 @@
+
+Symfony\Component\Form\Extension\Core\Type\ChoiceType (Block prefix: "choice")
+==============================================================================
+
+ --------------------------- -------------------- ------------------------------ ----------------------- 
+  Options                     Overridden options   Parent options                 Extension options      
+ --------------------------- -------------------- ------------------------------ ----------------------- 
+  choice_attr                 FormType             FormType                       FormTypeCsrfExtension  
+  choice_filter              -------------------- ------------------------------ ----------------------- 
+  choice_label                compound             action                         csrf_field_name        
+  choice_loader               data_class           allow_file_upload              csrf_message           
+  choice_name                 empty_data           attr                           csrf_protection        
+  choice_translation_domain   error_bubbling       attr_translation_parameters    csrf_token_id          
+  choice_value                trim                 auto_initialize                csrf_token_manager     
+  choices                                          block_name                                            
+  expanded                                         block_prefix                                          
+  group_by                                         by_reference                                          
+  multiple                                         data                                                  
+  placeholder                                      disabled                                              
+  preferred_choices                                help                                                  
+                                                   help_attr                                             
+                                                   help_html                                             
+                                                   help_translation_parameters                           
+                                                   inherit_data                                          
+                                                   is_empty_callback                                     
+                                                   label                                                 
+                                                   label_attr                                            
+                                                   label_format                                          
+                                                   label_html                                            
+                                                   label_translation_parameters                          
+                                                   mapped                                                
+                                                   method                                                
+                                                   post_max_size_message                                 
+                                                   property_path                                         
+                                                   required                                              
+                                                   row_attr                                              
+                                                   translation_domain                                    
+                                                   upload_max_size_message                               
+ --------------------------- -------------------- ------------------------------ ----------------------- 
+
+Parent types
+------------
+
+ * Symfony\Component\Form\Extension\Core\Type\FormType
+
+Type extensions
+---------------
+
+ * Symfony\Component\Form\Extension\Csrf\Type\FormTypeCsrfExtension
+

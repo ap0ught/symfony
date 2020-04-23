@@ -11,6 +11,8 @@
 
 namespace Symfony\Component\Security\Core\Authentication\Token;
 
+use Symfony\Component\Security\Core\User\UserInterface;
+
 /**
  * TokenInterface is the interface for the user authentication information.
  *
@@ -26,102 +28,111 @@ interface TokenInterface extends \Serializable
      *
      * @return string
      */
-    function __toString();
+    public function __toString();
 
     /**
      * Returns the user roles.
      *
-     * @return Role[] An array of Role instances.
+     * @return string[] The associated roles
      */
-    function getRoles();
+    public function getRoleNames(): array;
 
     /**
      * Returns the user credentials.
      *
      * @return mixed The user credentials
      */
-    function getCredentials();
+    public function getCredentials();
 
     /**
      * Returns a user representation.
      *
-     * @return mixed either returns an object which implements __toString(), or
-     *                  a primitive string is returned.
+     * @return string|\Stringable|UserInterface
+     *
+     * @see AbstractToken::setUser()
      */
-    function getUser();
+    public function getUser();
 
     /**
-     * Sets a user.
+     * Sets the user in the token.
      *
-     * @param mixed $user
+     * The user can be a UserInterface instance, or an object implementing
+     * a __toString method or the username as a regular string.
+     *
+     * @param string|\Stringable|UserInterface $user
+     *
+     * @throws \InvalidArgumentException
      */
-    function setUser($user);
+    public function setUser($user);
 
     /**
      * Returns the username.
      *
      * @return string
      */
-    function getUsername();
+    public function getUsername();
 
     /**
      * Returns whether the user is authenticated or not.
      *
-     * @return Boolean true if the token has been authenticated, false otherwise
+     * @return bool true if the token has been authenticated, false otherwise
      */
-    function isAuthenticated();
+    public function isAuthenticated();
 
     /**
      * Sets the authenticated flag.
-     *
-     * @param Boolean $isAuthenticated The authenticated flag
      */
-    function setAuthenticated($isAuthenticated);
+    public function setAuthenticated(bool $isAuthenticated);
 
     /**
      * Removes sensitive information from the token.
      */
-    function eraseCredentials();
+    public function eraseCredentials();
 
     /**
      * Returns the token attributes.
      *
      * @return array The token attributes
      */
-    function getAttributes();
+    public function getAttributes();
 
     /**
      * Sets the token attributes.
      *
      * @param array $attributes The token attributes
      */
-    function setAttributes(array $attributes);
+    public function setAttributes(array $attributes);
 
     /**
      * Returns true if the attribute exists.
      *
-     * @param  string  $name  The attribute name
-     *
-     * @return Boolean true if the attribute exists, false otherwise
+     * @return bool true if the attribute exists, false otherwise
      */
-    function hasAttribute($name);
+    public function hasAttribute(string $name);
 
     /**
      * Returns an attribute value.
-     *
-     * @param string $name The attribute name
      *
      * @return mixed The attribute value
      *
      * @throws \InvalidArgumentException When attribute doesn't exist for this token
      */
-    function getAttribute($name);
+    public function getAttribute(string $name);
 
     /**
      * Sets an attribute.
      *
-     * @param string $name  The attribute name
-     * @param mixed  $value The attribute value
+     * @param mixed $value The attribute value
      */
-    function setAttribute($name, $value);
+    public function setAttribute(string $name, $value);
+
+    /**
+     * Returns all the necessary state of the object for serialization purposes.
+     */
+    public function __serialize(): array;
+
+    /**
+     * Restores the object state from an array given by __serialize().
+     */
+    public function __unserialize(array $data): void;
 }

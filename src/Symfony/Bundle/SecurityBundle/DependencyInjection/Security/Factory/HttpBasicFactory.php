@@ -12,8 +12,7 @@
 namespace Symfony\Bundle\SecurityBundle\DependencyInjection\Security\Factory;
 
 use Symfony\Component\Config\Definition\Builder\NodeDefinition;
-
-use Symfony\Component\DependencyInjection\DefinitionDecorator;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 
@@ -22,14 +21,15 @@ use Symfony\Component\DependencyInjection\Reference;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class HttpBasicFactory implements SecurityFactoryInterface
+class HttpBasicFactory implements SecurityFactoryInterface, AuthenticatorFactoryInterface
 {
-    public function create(ContainerBuilder $container, $id, $config, $userProvider, $defaultEntryPoint)
+    public function create(ContainerBuilder $container, string $id, array $config, string $userProvider, ?string $defaultEntryPoint)
     {
         $provider = 'security.authentication.provider.dao.'.$id;
         $container
-            ->setDefinition($provider, new DefinitionDecorator('security.authentication.provider.dao'))
+            ->setDefinition($provider, new ChildDefinition('security.authentication.provider.dao'))
             ->replaceArgument(0, new Reference($userProvider))
+            ->replaceArgument(1, new Reference('security.user_checker.'.$id))
             ->replaceArgument(2, $id)
         ;
 
@@ -38,11 +38,23 @@ class HttpBasicFactory implements SecurityFactoryInterface
 
         // listener
         $listenerId = 'security.authentication.listener.basic.'.$id;
-        $listener = $container->setDefinition($listenerId, new DefinitionDecorator('security.authentication.listener.basic'));
+        $listener = $container->setDefinition($listenerId, new ChildDefinition('security.authentication.listener.basic'));
         $listener->replaceArgument(2, $id);
         $listener->replaceArgument(3, new Reference($entryPointId));
+        $listener->addMethodCall('setSessionAuthenticationStrategy', [new Reference('security.authentication.session_strategy.'.$id)]);
 
-        return array($provider, $listenerId, $entryPointId);
+        return [$provider, $listenerId, $entryPointId];
+    }
+
+    public function createAuthenticator(ContainerBuilder $container, string $firewallName, array $config, string $userProviderId): string
+    {
+        $authenticatorId = 'security.authenticator.http_basic.'.$firewallName;
+        $container
+            ->setDefinition($authenticatorId, new ChildDefinition('security.authenticator.http_basic'))
+            ->replaceArgument(0, $config['realm'])
+            ->replaceArgument(1, new Reference($userProviderId));
+
+        return $authenticatorId;
     }
 
     public function getPosition()
@@ -65,7 +77,7 @@ class HttpBasicFactory implements SecurityFactoryInterface
         ;
     }
 
-    protected function createEntryPoint($container, $id, $config, $defaultEntryPoint)
+    protected function createEntryPoint(ContainerBuilder $container, string $id, array $config, ?string $defaultEntryPoint)
     {
         if (null !== $defaultEntryPoint) {
             return $defaultEntryPoint;
@@ -73,7 +85,7 @@ class HttpBasicFactory implements SecurityFactoryInterface
 
         $entryPointId = 'security.authentication.basic_entry_point.'.$id;
         $container
-            ->setDefinition($entryPointId, new DefinitionDecorator('security.authentication.basic_entry_point'))
+            ->setDefinition($entryPointId, new ChildDefinition('security.authentication.basic_entry_point'))
             ->addArgument($config['realm'])
         ;
 

@@ -12,9 +12,7 @@
 namespace Symfony\Bundle\SecurityBundle\DependencyInjection\Security\Factory;
 
 use Symfony\Component\Config\Definition\Builder\NodeDefinition;
-
-use Symfony\Component\DependencyInjection\DefinitionDecorator;
-
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 
@@ -23,25 +21,41 @@ use Symfony\Component\DependencyInjection\Reference;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class X509Factory implements SecurityFactoryInterface
+class X509Factory implements SecurityFactoryInterface, AuthenticatorFactoryInterface
 {
-    public function create(ContainerBuilder $container, $id, $config, $userProvider, $defaultEntryPoint)
+    public function create(ContainerBuilder $container, string $id, array $config, string $userProvider, ?string $defaultEntryPoint)
     {
-        $provider = 'security.authentication.provider.pre_authenticated.'.$id;
+        $providerId = 'security.authentication.provider.pre_authenticated.'.$id;
         $container
-            ->setDefinition($provider, new DefinitionDecorator('security.authentication.provider.pre_authenticated'))
+            ->setDefinition($providerId, new ChildDefinition('security.authentication.provider.pre_authenticated'))
             ->replaceArgument(0, new Reference($userProvider))
+            ->replaceArgument(1, new Reference('security.user_checker.'.$id))
             ->addArgument($id)
         ;
 
         // listener
         $listenerId = 'security.authentication.listener.x509.'.$id;
-        $listener = $container->setDefinition($listenerId, new DefinitionDecorator('security.authentication.listener.x509'));
+        $listener = $container->setDefinition($listenerId, new ChildDefinition('security.authentication.listener.x509'));
         $listener->replaceArgument(2, $id);
         $listener->replaceArgument(3, $config['user']);
         $listener->replaceArgument(4, $config['credentials']);
+        $listener->addMethodCall('setSessionAuthenticationStrategy', [new Reference('security.authentication.session_strategy.'.$id)]);
 
-        return array($provider, $listenerId, $defaultEntryPoint);
+        return [$providerId, $listenerId, $defaultEntryPoint];
+    }
+
+    public function createAuthenticator(ContainerBuilder $container, string $firewallName, array $config, string $userProviderId)
+    {
+        $authenticatorId = 'security.authenticator.x509.'.$firewallName;
+        $container
+            ->setDefinition($authenticatorId, new ChildDefinition('security.authenticator.x509'))
+            ->replaceArgument(0, new Reference($userProviderId))
+            ->replaceArgument(2, $firewallName)
+            ->replaceArgument(3, $config['user'])
+            ->replaceArgument(4, $config['credentials'])
+        ;
+
+        return $authenticatorId;
     }
 
     public function getPosition()

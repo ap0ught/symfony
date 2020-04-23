@@ -14,55 +14,54 @@ namespace Symfony\Component\Config\Resource;
 /**
  * FileResource represents a resource stored on the filesystem.
  *
+ * The resource can be a file or a directory.
+ *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class FileResource implements ResourceInterface
+class FileResource implements SelfCheckingResourceInterface
 {
+    /**
+     * @var string|false
+     */
     private $resource;
 
     /**
-     * Constructor.
-     *
      * @param string $resource The file path to the resource
+     *
+     * @throws \InvalidArgumentException
      */
-    public function __construct($resource)
+    public function __construct(string $resource)
     {
-        $this->resource = realpath($resource);
+        $this->resource = realpath($resource) ?: (file_exists($resource) ? $resource : false);
+
+        if (false === $this->resource) {
+            throw new \InvalidArgumentException(sprintf('The file "%s" does not exist.', $resource));
+        }
     }
 
     /**
-     * Returns a string representation of the Resource.
-     *
-     * @return string A string representation of the Resource
+     * {@inheritdoc}
      */
-    public function __toString()
-    {
-        return (string) $this->resource;
-    }
-
-    /**
-     * Returns the resource tied to this Resource.
-     *
-     * @return mixed The resource
-     */
-    public function getResource()
+    public function __toString(): string
     {
         return $this->resource;
     }
 
     /**
-     * Returns true if the resource has not been updated since the given timestamp.
-     *
-     * @param integer $timestamp The last time the resource was loaded
-     *
-     * @return Boolean true if the resource has not been updated, false otherwise
+     * @return string The canonicalized, absolute path to the resource
      */
-    public function isFresh($timestamp)
+    public function getResource(): string
     {
-        if (!file_exists($this->resource)) {
-            return false;
-        }
+        return $this->resource;
+    }
 
-        return filemtime($this->resource) < $timestamp;
+    /**
+     * {@inheritdoc}
+     */
+    public function isFresh(int $timestamp): bool
+    {
+        return false !== ($filemtime = @filemtime($this->resource)) && $filemtime <= $timestamp;
     }
 }

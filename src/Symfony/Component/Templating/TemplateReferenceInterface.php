@@ -15,8 +15,6 @@ namespace Symfony\Component\Templating;
  * Interface to be implemented by all templates.
  *
  * @author Victor Berchet <victor@suumit.com>
- *
- * @api
  */
 interface TemplateReferenceInterface
 {
@@ -24,37 +22,26 @@ interface TemplateReferenceInterface
      * Gets the template parameters.
      *
      * @return array An array of parameters
-     *
-     * @api
      */
-    function all();
+    public function all();
 
     /**
      * Sets a template parameter.
      *
-     * @param string $name   The parameter name
-     * @param string $value  The parameter value
+     * @return $this
      *
-     * @return TemplateReferenceInterface The TemplateReferenceInterface instance
-     *
-     * @throws  \InvalidArgumentException if the parameter is not defined
-     *
-     * @api
+     * @throws \InvalidArgumentException if the parameter name is not supported
      */
-    function set($name, $value);
+    public function set(string $name, string $value);
 
     /**
      * Gets a template parameter.
      *
-     * @param string $name The parameter name
-     *
      * @return string The parameter value
      *
-     * @throws  \InvalidArgumentException if the parameter is not defined
-     *
-     * @api
+     * @throws \InvalidArgumentException if the parameter name is not supported
      */
-    function get($name);
+    public function get(string $name);
 
     /**
      * Returns the path to the template.
@@ -62,10 +49,8 @@ interface TemplateReferenceInterface
      * By default, it just returns the template name.
      *
      * @return string A path to the template or a resource
-     *
-     * @api
      */
-    function getPath();
+    public function getPath();
 
     /**
      * Returns the "logical" template name.
@@ -73,8 +58,15 @@ interface TemplateReferenceInterface
      * The template name acts as a unique identifier for the template.
      *
      * @return string The template name
-     *
-     * @api
      */
-    function getLogicalName();
+    public function getLogicalName();
+
+    /**
+     * Returns the string representation as shortcut for getLogicalName().
+     *
+     * Alias of getLogicalName().
+     *
+     * @return string The template name
+     */
+    public function __toString();
 }

@@ -13,22 +13,21 @@ namespace Symfony\Component\Console\Tester;
 
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\ArrayInput;
-use Symfony\Component\Console\Output\StreamOutput;
 
 /**
+ * Eases the testing of console commands.
+ *
  * @author Fabien Potencier <fabien@symfony.com>
+ * @author Robin Chalas <robin.chalas@gmail.com>
  */
 class CommandTester
 {
+    use TesterTrait;
+
     private $command;
     private $input;
-    private $output;
+    private $statusCode;
 
-    /**
-     * Constructor.
-     *
-     * @param Command $command A Command instance to test.
-     */
     public function __construct(Command $command)
     {
         $this->command = $command;
@@ -37,64 +36,43 @@ class CommandTester
     /**
      * Executes the command.
      *
-     * Available options:
+     * Available execution options:
      *
-     *  * interactive: Sets the input interactive flag
-     *  * decorated:   Sets the output decorated flag
-     *  * verbosity:   Sets the output verbosity flag
+     *  * interactive:               Sets the input interactive flag
+     *  * decorated:                 Sets the output decorated flag
+     *  * verbosity:                 Sets the output verbosity flag
+     *  * capture_stderr_separately: Make output of stdOut and stdErr separately available
      *
-     * @param array $input   An array of arguments and options
-     * @param array $options An array of options
+     * @param array $input   An array of command arguments and options
+     * @param array $options An array of execution options
      *
-     * @return integer The command exit code
+     * @return int The command exit code
      */
-    public function execute(array $input, array $options = array())
+    public function execute(array $input, array $options = [])
     {
+        // set the command name automatically if the application requires
+        // this argument and no command name was passed
+        if (!isset($input['command'])
+            && (null !== $application = $this->command->getApplication())
+            && $application->getDefinition()->hasArgument('command')
+        ) {
+            $input = array_merge(['command' => $this->command->getName()], $input);
+        }
+
         $this->input = new ArrayInput($input);
+        // Use an in-memory input stream even if no inputs are set so that QuestionHelper::ask() does not rely on the blocking STDIN.
+        $this->input->setStream(self::createStream($this->inputs));
+
         if (isset($options['interactive'])) {
             $this->input->setInteractive($options['interactive']);
         }
 
-        $this->output = new StreamOutput(fopen('php://memory', 'w', false));
-        if (isset($options['decorated'])) {
-            $this->output->setDecorated($options['decorated']);
-        }
-        if (isset($options['verbosity'])) {
-            $this->output->setVerbosity($options['verbosity']);
+        if (!isset($options['decorated'])) {
+            $options['decorated'] = false;
         }
 
-        return $this->command->run($this->input, $this->output);
-    }
+        $this->initOutput($options);
 
-    /**
-     * Gets the display returned by the last execution of the command.
-     *
-     * @return string The display
-     */
-    public function getDisplay()
-    {
-        rewind($this->output->getStream());
-
-        return stream_get_contents($this->output->getStream());
-    }
-
-    /**
-     * Gets the input instance used by the last execution of the command.
-     *
-     * @return InputInterface The current input instance
-     */
-    public function getInput()
-    {
-        return $this->input;
-    }
-
-    /**
-     * Gets the output instance used by the last execution of the command.
-     *
-     * @return OutputInterface The current output instance
-     */
-    public function getOutput()
-    {
-        return $this->output;
+        return $this->statusCode = $this->command->run($this->input, $this->output);
     }
 }

@@ -11,11 +11,14 @@
 
 namespace Symfony\Component\Security\Http;
 
-use Symfony\Component\Security\Core\SecurityContextInterface;
-
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\RedirectResponse;
-use Symfony\Component\Routing\RouterInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Routing\Exception\MethodNotAllowedException;
+use Symfony\Component\Routing\Exception\ResourceNotFoundException;
+use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
+use Symfony\Component\Routing\Matcher\RequestMatcherInterface;
+use Symfony\Component\Routing\Matcher\UrlMatcherInterface;
+use Symfony\Component\Security\Core\Security;
 
 /**
  * Encapsulates the logic needed to create sub-requests, redirect the user, and match URLs.
@@ -24,67 +27,82 @@ use Symfony\Component\Routing\RouterInterface;
  */
 class HttpUtils
 {
-    private $router;
+    private $urlGenerator;
+    private $urlMatcher;
+    private $domainRegexp;
+    private $secureDomainRegexp;
 
     /**
-     * Constructor.
+     * @param UrlMatcherInterface|RequestMatcherInterface $urlMatcher         The URL or Request matcher
+     * @param string|null                                 $domainRegexp       A regexp the target of HTTP redirections must match, scheme included
+     * @param string|null                                 $secureDomainRegexp A regexp the target of HTTP redirections must match when the scheme is "https"
      *
-     * @param RouterInterface $router An RouterInterface instance
+     * @throws \InvalidArgumentException
      */
-    public function __construct(RouterInterface $router = null)
+    public function __construct(UrlGeneratorInterface $urlGenerator = null, $urlMatcher = null, string $domainRegexp = null, string $secureDomainRegexp = null)
     {
-        $this->router = $router;
+        $this->urlGenerator = $urlGenerator;
+        if (null !== $urlMatcher && !$urlMatcher instanceof UrlMatcherInterface && !$urlMatcher instanceof RequestMatcherInterface) {
+            throw new \InvalidArgumentException('Matcher must either implement UrlMatcherInterface or RequestMatcherInterface.');
+        }
+        $this->urlMatcher = $urlMatcher;
+        $this->domainRegexp = $domainRegexp;
+        $this->secureDomainRegexp = $secureDomainRegexp;
     }
 
     /**
      * Creates a redirect Response.
      *
-     * @param Request $request A Request instance
-     * @param string  $path    A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
-     * @param integer $status  The status code
+     * @param string $path   A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
+     * @param int    $status The status code
      *
-     * @return Response A RedirectResponse instance
+     * @return RedirectResponse A RedirectResponse instance
      */
-    public function createRedirectResponse(Request $request, $path, $status = 302)
+    public function createRedirectResponse(Request $request, string $path, int $status = 302)
     {
-        if ('/' === $path[0]) {
-            $path = $request->getUriForPath($path);
-        } elseif (0 !== strpos($path, 'http')) {
-            $this->resetLocale($request);
-            $path = $this->generateUrl($path, true);
+        if (null !== $this->secureDomainRegexp && 'https' === $this->urlMatcher->getContext()->getScheme() && preg_match('#^https?:[/\\\\]{2,}+[^/]++#i', $path, $host) && !preg_match(sprintf($this->secureDomainRegexp, preg_quote($request->getHttpHost())), $host[0])) {
+            $path = '/';
+        }
+        if (null !== $this->domainRegexp && preg_match('#^https?:[/\\\\]{2,}+[^/]++#i', $path, $host) && !preg_match(sprintf($this->domainRegexp, preg_quote($request->getHttpHost())), $host[0])) {
+            $path = '/';
         }
 
-        return new RedirectResponse($path, $status);
+        return new RedirectResponse($this->generateUri($request, $path), $status);
     }
 
     /**
      * Creates a Request.
      *
-     * @param Request $request The current Request instance
-     * @param string  $path    A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
+     * @param string $path A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
      *
      * @return Request A Request instance
      */
-    public function createRequest(Request $request, $path)
+    public function createRequest(Request $request, string $path)
     {
-        if ($path && '/' !== $path[0] && 0 !== strpos($path, 'http')) {
-            $this->resetLocale($request);
-            $path = $this->generateUrl($path, true);
+        $newRequest = Request::create($this->generateUri($request, $path), 'get', [], $request->cookies->all(), [], $request->server->all());
+
+        static $setSession;
+
+        if (null === $setSession) {
+            $setSession = \Closure::bind(static function ($newRequest, $request) { $newRequest->session = $request->session; }, null, Request::class);
+        }
+        $setSession($newRequest, $request);
+
+        if ($request->attributes->has(Security::AUTHENTICATION_ERROR)) {
+            $newRequest->attributes->set(Security::AUTHENTICATION_ERROR, $request->attributes->get(Security::AUTHENTICATION_ERROR));
+        }
+        if ($request->attributes->has(Security::ACCESS_DENIED_ERROR)) {
+            $newRequest->attributes->set(Security::ACCESS_DENIED_ERROR, $request->attributes->get(Security::ACCESS_DENIED_ERROR));
+        }
+        if ($request->attributes->has(Security::LAST_USERNAME)) {
+            $newRequest->attributes->set(Security::LAST_USERNAME, $request->attributes->get(Security::LAST_USERNAME));
         }
 
-        $newRequest = Request::create($path, 'get', array(), $request->cookies->all(), array(), $request->server->all());
-        if ($session = $request->getSession()) {
-            $newRequest->setSession($session);
+        if ($request->get('_format')) {
+            $newRequest->attributes->set('_format', $request->get('_format'));
         }
-
-        if ($request->attributes->has(SecurityContextInterface::AUTHENTICATION_ERROR)) {
-            $newRequest->attributes->set(SecurityContextInterface::AUTHENTICATION_ERROR, $request->attributes->get(SecurityContextInterface::AUTHENTICATION_ERROR));
-        }
-        if ($request->attributes->has(SecurityContextInterface::ACCESS_DENIED_ERROR)) {
-            $newRequest->attributes->set(SecurityContextInterface::ACCESS_DENIED_ERROR, $request->attributes->get(SecurityContextInterface::ACCESS_DENIED_ERROR));
-        }
-        if ($request->attributes->has(SecurityContextInterface::LAST_USERNAME)) {
-            $newRequest->attributes->set(SecurityContextInterface::LAST_USERNAME, $request->attributes->get(SecurityContextInterface::LAST_USERNAME));
+        if ($request->getDefaultLocale() !== $request->getLocale()) {
+            $newRequest->setLocale($request->getLocale());
         }
 
         return $newRequest;
@@ -93,53 +111,70 @@ class HttpUtils
     /**
      * Checks that a given path matches the Request.
      *
-     * @param Request $request A Request instance
-     * @param string  $path    A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
+     * @param string $path A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
      *
-     * @return Boolean true if the path is the same as the one from the Request, false otherwise
+     * @return bool true if the path is the same as the one from the Request, false otherwise
      */
-    public function checkRequestPath(Request $request, $path)
+    public function checkRequestPath(Request $request, string $path)
     {
         if ('/' !== $path[0]) {
             try {
-                $parameters = $this->router->match($request->getPathInfo());
+                // matching a request is more powerful than matching a URL path + context, so try that first
+                if ($this->urlMatcher instanceof RequestMatcherInterface) {
+                    $parameters = $this->urlMatcher->matchRequest($request);
+                } else {
+                    $parameters = $this->urlMatcher->match($request->getPathInfo());
+                }
 
-                return $path === $parameters['_route'];
-            } catch (\Exception $e) {
+                return isset($parameters['_route']) && $path === $parameters['_route'];
+            } catch (MethodNotAllowedException $e) {
+                return false;
+            } catch (ResourceNotFoundException $e) {
                 return false;
             }
         }
 
-        return $path === $request->getPathInfo();
+        return $path === rawurldecode($request->getPathInfo());
     }
 
-    // hack (don't have a better solution for now)
-    private function resetLocale(Request $request)
+    /**
+     * Generates a URI, based on the given path or absolute URL.
+     *
+     * @param string $path A path (an absolute path (/foo), an absolute URL (http://...), or a route name (foo))
+     *
+     * @return string An absolute URL
+     *
+     * @throws \LogicException
+     */
+    public function generateUri(Request $request, string $path)
     {
-        $context = $this->router->getContext();
-        if ($context->getParameter('_locale')) {
-            return;
+        if (0 === strpos($path, 'http') || !$path) {
+            return $path;
         }
 
-        try {
-            $parameters = $this->router->match($request->getPathInfo());
+        if ('/' === $path[0]) {
+            return $request->getUriForPath($path);
+        }
 
-            if (isset($parameters['_locale'])) {
-                $context->setParameter('_locale', $parameters['_locale']);
-            } elseif ($session = $request->getSession()) {
-                $context->setParameter('_locale', $session->getLocale());
+        if (null === $this->urlGenerator) {
+            throw new \LogicException('You must provide a UrlGeneratorInterface instance to be able to use routes.');
+        }
+
+        $url = $this->urlGenerator->generate($path, $request->attributes->all(), UrlGeneratorInterface::ABSOLUTE_URL);
+
+        // unnecessary query string parameters must be removed from URL
+        // (ie. query parameters that are presents in $attributes)
+        // fortunately, they all are, so we have to remove entire query string
+        $position = strpos($url, '?');
+        if (false !== $position) {
+            $fragment = parse_url($url, PHP_URL_FRAGMENT);
+            $url = substr($url, 0, $position);
+            // fragment must be preserved
+            if ($fragment) {
+                $url .= "#$fragment";
             }
-        } catch (\Exception $e) {
-            // let's hope user doesn't use the locale in the path
-        }
-    }
-
-    private function generateUrl($route, $absolute = false)
-    {
-        if (null === $this->router) {
-            throw new \LogicException('You must provide a RouterInterface instance to be able to use routes.');
         }
 
-        return $this->router->generate($route, array(), $absolute);
+        return $url;
     }
 }

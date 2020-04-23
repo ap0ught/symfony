@@ -11,111 +11,176 @@
 
 namespace Symfony\Bundle\FrameworkBundle\Translation;
 
+use Psr\Container\ContainerInterface;
+use Symfony\Component\Config\Resource\DirectoryResource;
+use Symfony\Component\Config\Resource\FileExistenceResource;
+use Symfony\Component\HttpKernel\CacheWarmer\WarmableInterface;
+use Symfony\Component\Translation\Exception\InvalidArgumentException;
+use Symfony\Component\Translation\Formatter\MessageFormatterInterface;
 use Symfony\Component\Translation\Translator as BaseTranslator;
-use Symfony\Component\Translation\Loader\LoaderInterface;
-use Symfony\Component\Translation\MessageSelector;
-use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Component\HttpFoundation\Session;
-use Symfony\Component\Config\ConfigCache;
 
 /**
  * Translator.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class Translator extends BaseTranslator
+class Translator extends BaseTranslator implements WarmableInterface
 {
     protected $container;
-    protected $options;
-    protected $session;
     protected $loaderIds;
+
+    protected $options = [
+        'cache_dir' => null,
+        'debug' => false,
+        'resource_files' => [],
+        'scanned_directories' => [],
+        'cache_vary' => [],
+    ];
+
+    /**
+     * @var array
+     */
+    private $resourceLocales;
+
+    /**
+     * Holds parameters from addResource() calls so we can defer the actual
+     * parent::addResource() calls until initialize() is executed.
+     *
+     * @var array
+     */
+    private $resources = [];
+
+    private $resourceFiles;
+
+    /**
+     * @var string[]
+     */
+    private $scannedDirectories;
+
+    /**
+     * @var string[]
+     */
+    private $enabledLocales;
 
     /**
      * Constructor.
      *
      * Available options:
      *
-     *   * cache_dir: The cache directory (or null to disable caching)
-     *   * debug:     Whether to enable debugging or not (false by default)
+     *   * cache_dir:      The cache directory (or null to disable caching)
+     *   * debug:          Whether to enable debugging or not (false by default)
+     *   * resource_files: List of translation resources available grouped by locale.
+     *   * cache_vary:     An array of data that is serialized to generate the cached catalogue name.
      *
-     * @param ContainerInterface $container A ContainerInterface instance
-     * @param MessageSelector    $selector  The message selector for pluralization
-     * @param array              $loaderIds An array of loader Ids
-     * @param array              $options   An array of options
-     * @param Session            $session   A Session instance
+     * @throws InvalidArgumentException
      */
-    public function __construct(ContainerInterface $container, MessageSelector $selector, $loaderIds = array(), array $options = array(), Session $session = null)
+    public function __construct(ContainerInterface $container, MessageFormatterInterface $formatter, string $defaultLocale, array $loaderIds = [], array $options = [], array $enabledLocales = [])
     {
-        parent::__construct(null, $selector);
-
-        $this->session = $session;
         $this->container = $container;
         $this->loaderIds = $loaderIds;
-
-        $this->options = array(
-            'cache_dir' => null,
-            'debug'     => false,
-        );
+        $this->enabledLocales = $enabledLocales;
 
         // check option names
         if ($diff = array_diff(array_keys($options), array_keys($this->options))) {
-            throw new \InvalidArgumentException(sprintf('The Translator does not support the following options: \'%s\'.', implode('\', \'', $diff)));
+            throw new InvalidArgumentException(sprintf('The Translator does not support the following options: \'%s\'.', implode('\', \'', $diff)));
         }
 
         $this->options = array_merge($this->options, $options);
+        $this->resourceLocales = array_keys($this->options['resource_files']);
+        $this->resourceFiles = $this->options['resource_files'];
+        $this->scannedDirectories = $this->options['scanned_directories'];
+
+        parent::__construct($defaultLocale, $formatter, $this->options['cache_dir'], $this->options['debug'], $this->options['cache_vary']);
     }
 
     /**
      * {@inheritdoc}
+     *
+     * @return string[]
      */
-    public function getLocale()
+    public function warmUp(string $cacheDir)
     {
-        if (null === $this->locale && null !== $this->session) {
-            $this->locale = $this->session->getLocale();
-        }
-
-        return $this->locale;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    protected function loadCatalogue($locale)
-    {
-        if (isset($this->catalogues[$locale])) {
-            return;
-        }
-
+        // skip warmUp when translator doesn't use cache
         if (null === $this->options['cache_dir']) {
-            $this->initialize();
-
-            return parent::loadCatalogue($locale);
-        }
-
-        $cache = new ConfigCache($this->options['cache_dir'].'/catalogue.'.$locale.'.php', $this->options['debug']);
-        if (!$cache->isFresh()) {
-            $this->initialize();
-
-            parent::loadCatalogue($locale);
-
-            $content = sprintf(
-                "<?php use Symfony\Component\Translation\MessageCatalogue; return new MessageCatalogue('%s', %s);",
-                $locale,
-                var_export($this->catalogues[$locale]->all(), true)
-            );
-
-            $cache->write($content, $this->catalogues[$locale]->getResources());
-
             return;
         }
 
-        $this->catalogues[$locale] = include $cache;
+        $localesToWarmUp = $this->enabledLocales ?: array_merge($this->getFallbackLocales(), [$this->getLocale()], $this->resourceLocales);
+
+        foreach (array_unique($localesToWarmUp) as $locale) {
+            // reset catalogue in case it's already loaded during the dump of the other locales.
+            if (isset($this->catalogues[$locale])) {
+                unset($this->catalogues[$locale]);
+            }
+
+            $this->loadCatalogue($locale);
+        }
+
+        return [];
+    }
+
+    public function addResource(string $format, $resource, string $locale, string $domain = null)
+    {
+        if ($this->resourceFiles) {
+            $this->addResourceFiles();
+        }
+        $this->resources[] = [$format, $resource, $locale, $domain];
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function initializeCatalogue(string $locale)
+    {
+        $this->initialize();
+        parent::initializeCatalogue($locale);
+    }
+
+    /**
+     * @internal
+     */
+    protected function doLoadCatalogue(string $locale): void
+    {
+        parent::doLoadCatalogue($locale);
+
+        foreach ($this->scannedDirectories as $directory) {
+            $resourceClass = file_exists($directory) ? DirectoryResource::class : FileExistenceResource::class;
+            $this->catalogues[$locale]->addResource(new $resourceClass($directory));
+        }
     }
 
     protected function initialize()
     {
-        foreach ($this->loaderIds as $id => $alias) {
-            $this->addLoader($alias, $this->container->get($id));
+        if ($this->resourceFiles) {
+            $this->addResourceFiles();
+        }
+        foreach ($this->resources as $key => $params) {
+            list($format, $resource, $locale, $domain) = $params;
+            parent::addResource($format, $resource, $locale, $domain);
+        }
+        $this->resources = [];
+
+        foreach ($this->loaderIds as $id => $aliases) {
+            foreach ($aliases as $alias) {
+                $this->addLoader($alias, $this->container->get($id));
+            }
+        }
+    }
+
+    private function addResourceFiles()
+    {
+        $filesByLocale = $this->resourceFiles;
+        $this->resourceFiles = [];
+
+        foreach ($filesByLocale as $locale => $files) {
+            foreach ($files as $key => $file) {
+                // filename is domain.locale.format
+                $fileNameParts = explode('.', basename($file));
+                $format = array_pop($fileNameParts);
+                $locale = array_pop($fileNameParts);
+                $domain = implode('.', $fileNameParts);
+                $this->addResource($format, $file, $locale, $domain);
+            }
         }
     }
 }

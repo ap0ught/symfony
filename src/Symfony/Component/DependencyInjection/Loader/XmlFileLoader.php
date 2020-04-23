@@ -11,15 +11,22 @@
 
 namespace Symfony\Component\DependencyInjection\Loader;
 
-use Symfony\Component\DependencyInjection\DefinitionDecorator;
-
-use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\Config\Util\XmlUtils;
 use Symfony\Component\DependencyInjection\Alias;
-use Symfony\Component\DependencyInjection\Definition;
-use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\DependencyInjection\Argument\AbstractArgument;
+use Symfony\Component\DependencyInjection\Argument\BoundArgument;
+use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
+use Symfony\Component\DependencyInjection\Argument\ServiceLocatorArgument;
+use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\DependencyInjection\SimpleXMLElement;
-use Symfony\Component\Config\Resource\FileResource;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
+use Symfony\Component\DependencyInjection\Exception\RuntimeException;
+use Symfony\Component\DependencyInjection\Extension\ExtensionInterface;
+use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\ExpressionLanguage\Expression;
 
 /**
  * XmlFileLoader loads XML files service definitions.
@@ -28,23 +35,25 @@ use Symfony\Component\Config\Resource\FileResource;
  */
 class XmlFileLoader extends FileLoader
 {
+    const NS = 'http://symfony.com/schema/dic/services';
+
+    protected $autoRegisterAliasesForSinglyImplementedInterfaces = false;
+
     /**
-     * Loads an XML file.
-     *
-     * @param mixed  $file The resource
-     * @param string $type The resource type
+     * {@inheritdoc}
      */
-    public function load($file, $type = null)
+    public function load($resource, string $type = null)
     {
-        $path = $this->locator->locate($file);
+        $path = $this->locator->locate($resource);
 
-        $xml = $this->parseFile($path);
-        $xml->registerXPathNamespace('container', 'http://symfony.com/schema/dic/services');
+        $xml = $this->parseFileToDOM($path);
 
-        $this->container->addResource(new FileResource($path));
+        $this->container->fileExists($path);
+
+        $defaults = $this->getServiceDefaults($xml, $path);
 
         // anonymous services
-        $xml = $this->processAnonymousServices($xml, $path);
+        $this->processAnonymousServices($xml, $path);
 
         // imports
         $this->parseImports($xml, $path);
@@ -56,265 +65,536 @@ class XmlFileLoader extends FileLoader
         $this->loadFromExtensions($xml);
 
         // services
-        $this->parseDefinitions($xml, $path);
+        try {
+            $this->parseDefinitions($xml, $path, $defaults);
+        } finally {
+            $this->instanceof = [];
+            $this->registerAliasesForSinglyImplementedInterfaces();
+        }
     }
 
     /**
-     * Returns true if this class supports the given resource.
-     *
-     * @param mixed  $resource A resource
-     * @param string $type     The resource type
-     *
-     * @return Boolean true if this class supports the given resource, false otherwise
+     * {@inheritdoc}
      */
-    public function supports($resource, $type = null)
+    public function supports($resource, string $type = null)
     {
-        return is_string($resource) && 'xml' === pathinfo($resource, PATHINFO_EXTENSION);
+        if (!\is_string($resource)) {
+            return false;
+        }
+
+        if (null === $type && 'xml' === pathinfo($resource, PATHINFO_EXTENSION)) {
+            return true;
+        }
+
+        return 'xml' === $type;
     }
 
-    /**
-     * Parses parameters
-     *
-     * @param SimpleXMLElement $xml
-     * @param string $file
-     * @return void
-     */
-    private function parseParameters(SimpleXMLElement $xml, $file)
+    private function parseParameters(\DOMDocument $xml, string $file)
     {
-        if (!$xml->parameters) {
+        if ($parameters = $this->getChildren($xml->documentElement, 'parameters')) {
+            $this->container->getParameterBag()->add($this->getArgumentsAsPhp($parameters[0], 'parameter', $file));
+        }
+    }
+
+    private function parseImports(\DOMDocument $xml, string $file)
+    {
+        $xpath = new \DOMXPath($xml);
+        $xpath->registerNamespace('container', self::NS);
+
+        if (false === $imports = $xpath->query('//container:imports/container:import')) {
             return;
         }
 
-        $this->container->getParameterBag()->add($xml->parameters->getArgumentsAsPhp('parameter'));
-    }
-
-    /**
-     * Parses imports
-     *
-     * @param SimpleXMLElement $xml
-     * @param string $file
-     * @return void
-     */
-    private function parseImports(SimpleXMLElement $xml, $file)
-    {
-        if (false === $imports = $xml->xpath('//container:imports/container:import')) {
-            return;
-        }
-
+        $defaultDirectory = \dirname($file);
         foreach ($imports as $import) {
-            $this->setCurrentDir(dirname($file));
-            $this->import((string) $import['resource'], null, (Boolean) $import->getAttributeAsPhp('ignore-errors'), $file);
+            $this->setCurrentDir($defaultDirectory);
+            $this->import($import->getAttribute('resource'), XmlUtils::phpize($import->getAttribute('type')) ?: null, XmlUtils::phpize($import->getAttribute('ignore-errors')) ?: false, $file);
         }
     }
 
-    /**
-     * Parses multiple definitions
-     *
-     * @param SimpleXMLElement $xml
-     * @param string $file
-     * @return void
-     */
-    private function parseDefinitions(SimpleXMLElement $xml, $file)
+    private function parseDefinitions(\DOMDocument $xml, string $file, array $defaults)
     {
-        if (false === $services = $xml->xpath('//container:services/container:service')) {
+        $xpath = new \DOMXPath($xml);
+        $xpath->registerNamespace('container', self::NS);
+
+        if (false === $services = $xpath->query('//container:services/container:service|//container:services/container:prototype')) {
             return;
         }
+        $this->setCurrentDir(\dirname($file));
 
+        $this->instanceof = [];
+        $this->isLoadingInstanceof = true;
+        $instanceof = $xpath->query('//container:services/container:instanceof');
+        foreach ($instanceof as $service) {
+            $this->setDefinition((string) $service->getAttribute('id'), $this->parseDefinition($service, $file, []));
+        }
+
+        $this->isLoadingInstanceof = false;
         foreach ($services as $service) {
-            $this->parseDefinition((string) $service['id'], $service, $file);
+            if (null !== $definition = $this->parseDefinition($service, $file, $defaults)) {
+                if ('prototype' === $service->tagName) {
+                    $excludes = array_column($this->getChildren($service, 'exclude'), 'nodeValue');
+                    if ($service->hasAttribute('exclude')) {
+                        if (\count($excludes) > 0) {
+                            throw new InvalidArgumentException('You cannot use both the attribute "exclude" and <exclude> tags at the same time.');
+                        }
+                        $excludes = [$service->getAttribute('exclude')];
+                    }
+                    $this->registerClasses($definition, (string) $service->getAttribute('namespace'), (string) $service->getAttribute('resource'), $excludes);
+                } else {
+                    $this->setDefinition((string) $service->getAttribute('id'), $definition);
+                }
+            }
         }
     }
 
     /**
-     * Parses an individual Definition
-     *
-     * @param string $id
-     * @param SimpleXMLElement $service
-     * @param string $file
-     * @return void
+     * Get service defaults.
      */
-    private function parseDefinition($id, $service, $file)
+    private function getServiceDefaults(\DOMDocument $xml, string $file): array
     {
-        if ((string) $service['alias']) {
-            $public = true;
-            if (isset($service['public'])) {
-                $public = $service->getAttributeAsPhp('public');
-            }
-            $this->container->setAlias($id, new Alias((string) $service['alias'], $public));
+        $xpath = new \DOMXPath($xml);
+        $xpath->registerNamespace('container', self::NS);
 
-            return;
+        if (null === $defaultsNode = $xpath->query('//container:services/container:defaults')->item(0)) {
+            return [];
         }
 
-        if (isset($service['parent'])) {
-            $definition = new DefinitionDecorator((string) $service['parent']);
+        $bindings = [];
+        foreach ($this->getArgumentsAsPhp($defaultsNode, 'bind', $file) as $argument => $value) {
+            $bindings[$argument] = new BoundArgument($value, true, BoundArgument::DEFAULTS_BINDING, $file);
+        }
+
+        $defaults = [
+            'tags' => $this->getChildren($defaultsNode, 'tag'),
+            'bind' => $bindings,
+        ];
+
+        foreach ($defaults['tags'] as $tag) {
+            if ('' === $tag->getAttribute('name')) {
+                throw new InvalidArgumentException(sprintf('The tag name for tag "<defaults>" in "%s" must be a non-empty string.', $file));
+            }
+        }
+
+        if ($defaultsNode->hasAttribute('autowire')) {
+            $defaults['autowire'] = XmlUtils::phpize($defaultsNode->getAttribute('autowire'));
+        }
+        if ($defaultsNode->hasAttribute('public')) {
+            $defaults['public'] = XmlUtils::phpize($defaultsNode->getAttribute('public'));
+        }
+        if ($defaultsNode->hasAttribute('autoconfigure')) {
+            $defaults['autoconfigure'] = XmlUtils::phpize($defaultsNode->getAttribute('autoconfigure'));
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * Parses an individual Definition.
+     */
+    private function parseDefinition(\DOMElement $service, string $file, array $defaults): ?Definition
+    {
+        if ($alias = $service->getAttribute('alias')) {
+            $this->validateAlias($service, $file);
+
+            $this->container->setAlias((string) $service->getAttribute('id'), $alias = new Alias($alias));
+            if ($publicAttr = $service->getAttribute('public')) {
+                $alias->setPublic(XmlUtils::phpize($publicAttr));
+            } elseif (isset($defaults['public'])) {
+                $alias->setPublic($defaults['public']);
+            }
+
+            if ($deprecated = $this->getChildren($service, 'deprecated')) {
+                $message = $deprecated[0]->nodeValue ?: '';
+                $package = $deprecated[0]->getAttribute('package') ?: '';
+                $version = $deprecated[0]->getAttribute('version') ?: '';
+
+                if (!$deprecated[0]->hasAttribute('package')) {
+                    trigger_deprecation('symfony/dependency-injection', '5.1', 'Not setting the attribute "package" of the node "deprecated" is deprecated.');
+                }
+
+                if (!$deprecated[0]->hasAttribute('version')) {
+                    trigger_deprecation('symfony/dependency-injection', '5.1', 'Not setting the attribute "version" of the node "deprecated" is deprecated.');
+                }
+
+                $alias->setDeprecated($package, $version, $message);
+            }
+
+            return null;
+        }
+
+        if ($this->isLoadingInstanceof) {
+            $definition = new ChildDefinition('');
+        } elseif ($parent = $service->getAttribute('parent')) {
+            $definition = new ChildDefinition($parent);
         } else {
             $definition = new Definition();
         }
 
-        foreach (array('class', 'scope', 'public', 'factory-class', 'factory-method', 'factory-service', 'synthetic', 'abstract') as $key) {
-            if (isset($service[$key])) {
-                $method = 'set'.str_replace('-', '', $key);
-                $definition->$method((string) $service->getAttributeAsPhp($key));
+        if (isset($defaults['public'])) {
+            $definition->setPublic($defaults['public']);
+        }
+        if (isset($defaults['autowire'])) {
+            $definition->setAutowired($defaults['autowire']);
+        }
+        if (isset($defaults['autoconfigure'])) {
+            $definition->setAutoconfigured($defaults['autoconfigure']);
+        }
+
+        $definition->setChanges([]);
+
+        foreach (['class', 'public', 'shared', 'synthetic', 'abstract'] as $key) {
+            if ($value = $service->getAttribute($key)) {
+                $method = 'set'.$key;
+                $definition->$method($value = XmlUtils::phpize($value));
             }
         }
 
-        if ($service->file) {
-            $definition->setFile((string) $service->file);
+        if ($value = $service->getAttribute('lazy')) {
+            $definition->setLazy((bool) $value = XmlUtils::phpize($value));
+            if (\is_string($value)) {
+                $definition->addTag('proxy', ['interface' => $value]);
+            }
         }
 
-        $definition->setArguments($service->getArgumentsAsPhp('argument'));
-        $definition->setProperties($service->getArgumentsAsPhp('property'));
+        if ($value = $service->getAttribute('autowire')) {
+            $definition->setAutowired(XmlUtils::phpize($value));
+        }
 
-        if (isset($service->configurator)) {
-            if (isset($service->configurator['function'])) {
-                $definition->setConfigurator((string) $service->configurator['function']);
+        if ($value = $service->getAttribute('autoconfigure')) {
+            $definition->setAutoconfigured(XmlUtils::phpize($value));
+        }
+
+        if ($files = $this->getChildren($service, 'file')) {
+            $definition->setFile($files[0]->nodeValue);
+        }
+
+        if ($deprecated = $this->getChildren($service, 'deprecated')) {
+            $message = $deprecated[0]->nodeValue ?: '';
+            $package = $deprecated[0]->getAttribute('package') ?: '';
+            $version = $deprecated[0]->getAttribute('version') ?: '';
+
+            if ('' === $package) {
+                trigger_deprecation('symfony/dependency-injection', '5.1', 'Not setting the attribute "package" of the node "deprecated" is deprecated.');
+            }
+
+            if ('' === $version) {
+                trigger_deprecation('symfony/dependency-injection', '5.1', 'Not setting the attribute "version" of the node "deprecated" is deprecated.');
+            }
+
+            $definition->setDeprecated($package, $version, $message);
+        }
+
+        $definition->setArguments($this->getArgumentsAsPhp($service, 'argument', $file, $definition instanceof ChildDefinition));
+        $definition->setProperties($this->getArgumentsAsPhp($service, 'property', $file));
+
+        if ($factories = $this->getChildren($service, 'factory')) {
+            $factory = $factories[0];
+            if ($function = $factory->getAttribute('function')) {
+                $definition->setFactory($function);
             } else {
-                if (isset($service->configurator['service'])) {
-                    $class = new Reference((string) $service->configurator['service'], ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE, false);
+                if ($childService = $factory->getAttribute('service')) {
+                    $class = new Reference($childService, ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE);
                 } else {
-                    $class = (string) $service->configurator['class'];
+                    $class = $factory->hasAttribute('class') ? $factory->getAttribute('class') : null;
                 }
 
-                $definition->setConfigurator(array($class, (string) $service->configurator['method']));
+                $definition->setFactory([$class, $factory->getAttribute('method') ?: '__invoke']);
             }
         }
 
-        foreach ($service->call as $call) {
-            $definition->addMethodCall((string) $call['method'], $call->getArgumentsAsPhp('argument'));
+        if ($configurators = $this->getChildren($service, 'configurator')) {
+            $configurator = $configurators[0];
+            if ($function = $configurator->getAttribute('function')) {
+                $definition->setConfigurator($function);
+            } else {
+                if ($childService = $configurator->getAttribute('service')) {
+                    $class = new Reference($childService, ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE);
+                } else {
+                    $class = $configurator->getAttribute('class');
+                }
+
+                $definition->setConfigurator([$class, $configurator->getAttribute('method') ?: '__invoke']);
+            }
         }
 
-        foreach ($service->tag as $tag) {
-            $parameters = array();
-            foreach ($tag->attributes() as $name => $value) {
+        foreach ($this->getChildren($service, 'call') as $call) {
+            $definition->addMethodCall($call->getAttribute('method'), $this->getArgumentsAsPhp($call, 'argument', $file), XmlUtils::phpize($call->getAttribute('returns-clone')));
+        }
+
+        $tags = $this->getChildren($service, 'tag');
+
+        if (!empty($defaults['tags'])) {
+            $tags = array_merge($tags, $defaults['tags']);
+        }
+
+        foreach ($tags as $tag) {
+            $parameters = [];
+            foreach ($tag->attributes as $name => $node) {
                 if ('name' === $name) {
                     continue;
                 }
 
-                $parameters[$name] = SimpleXMLElement::phpize($value);
+                if (false !== strpos($name, '-') && false === strpos($name, '_') && !\array_key_exists($normalizedName = str_replace('-', '_', $name), $parameters)) {
+                    $parameters[$normalizedName] = XmlUtils::phpize($node->nodeValue);
+                }
+                // keep not normalized key
+                $parameters[$name] = XmlUtils::phpize($node->nodeValue);
             }
 
-            $definition->addTag((string) $tag['name'], $parameters);
+            if ('' === $tag->getAttribute('name')) {
+                throw new InvalidArgumentException(sprintf('The tag name for service "%s" in "%s" must be a non-empty string.', (string) $service->getAttribute('id'), $file));
+            }
+
+            $definition->addTag($tag->getAttribute('name'), $parameters);
         }
 
-        $this->container->setDefinition($id, $definition);
+        $bindings = $this->getArgumentsAsPhp($service, 'bind', $file);
+        $bindingType = $this->isLoadingInstanceof ? BoundArgument::INSTANCEOF_BINDING : BoundArgument::SERVICE_BINDING;
+        foreach ($bindings as $argument => $value) {
+            $bindings[$argument] = new BoundArgument($value, true, $bindingType, $file);
+        }
+
+        if (isset($defaults['bind'])) {
+            // deep clone, to avoid multiple process of the same instance in the passes
+            $bindings = array_merge(unserialize(serialize($defaults['bind'])), $bindings);
+        }
+        if ($bindings) {
+            $definition->setBindings($bindings);
+        }
+
+        if ($decorates = $service->getAttribute('decorates')) {
+            $decorationOnInvalid = $service->getAttribute('decoration-on-invalid') ?: 'exception';
+            if ('exception' === $decorationOnInvalid) {
+                $invalidBehavior = ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE;
+            } elseif ('ignore' === $decorationOnInvalid) {
+                $invalidBehavior = ContainerInterface::IGNORE_ON_INVALID_REFERENCE;
+            } elseif ('null' === $decorationOnInvalid) {
+                $invalidBehavior = ContainerInterface::NULL_ON_INVALID_REFERENCE;
+            } else {
+                throw new InvalidArgumentException(sprintf('Invalid value "%s" for attribute "decoration-on-invalid" on service "%s". Did you mean "exception", "ignore" or "null" in "%s"?', $decorationOnInvalid, (string) $service->getAttribute('id'), $file));
+            }
+
+            $renameId = $service->hasAttribute('decoration-inner-name') ? $service->getAttribute('decoration-inner-name') : null;
+            $priority = $service->hasAttribute('decoration-priority') ? $service->getAttribute('decoration-priority') : 0;
+
+            $definition->setDecoratedService($decorates, $renameId, $priority, $invalidBehavior);
+        }
+
+        return $definition;
     }
 
     /**
-     * Parses a XML file.
+     * Parses a XML file to a \DOMDocument.
      *
-     * @param string $file Path to a file
-     * @throws \InvalidArgumentException When loading of XML file returns error
+     * @throws InvalidArgumentException When loading of XML file returns error
      */
-    private function parseFile($file)
+    private function parseFileToDOM(string $file): \DOMDocument
     {
-        $dom = new \DOMDocument();
-        libxml_use_internal_errors(true);
-        if (!$dom->load($file, LIBXML_COMPACT)) {
-            throw new \InvalidArgumentException(implode("\n", $this->getXmlErrors()));
+        try {
+            $dom = XmlUtils::loadFile($file, [$this, 'validateSchema']);
+        } catch (\InvalidArgumentException $e) {
+            throw new InvalidArgumentException(sprintf('Unable to parse file "%s": "%s".', $file, $e->getMessage()), $e->getCode(), $e);
         }
-        $dom->validateOnParse = true;
-        $dom->normalizeDocument();
-        libxml_use_internal_errors(false);
-        $this->validate($dom, $file);
 
-        return simplexml_import_dom($dom, 'Symfony\\Component\\DependencyInjection\\SimpleXMLElement');
+        $this->validateExtensions($dom, $file);
+
+        return $dom;
     }
 
     /**
-     * Processes anonymous services
-     *
-     * @param SimpleXMLElement $xml
-     * @param string $file
-     * @return array An array of anonymous services
+     * Processes anonymous services.
      */
-    private function processAnonymousServices(SimpleXMLElement $xml, $file)
+    private function processAnonymousServices(\DOMDocument $xml, string $file)
     {
-        $definitions = array();
+        $definitions = [];
         $count = 0;
+        $suffix = '~'.ContainerBuilder::hash($file);
 
-        // anonymous services as arguments
-        if (false === $nodes = $xml->xpath('//container:argument[@type="service"][not(@id)]')) {
-            return $xml;
-        }
-        foreach ($nodes as $node) {
-            // give it a unique name
-            $node['id'] = sprintf('%s_%d', md5($file), ++$count);
+        $xpath = new \DOMXPath($xml);
+        $xpath->registerNamespace('container', self::NS);
 
-            $definitions[(string) $node['id']] = array($node->service, $file, false);
-            $node->service['id'] = (string) $node['id'];
+        // anonymous services as arguments/properties
+        if (false !== $nodes = $xpath->query('//container:argument[@type="service"][not(@id)]|//container:property[@type="service"][not(@id)]|//container:bind[not(@id)]|//container:factory[not(@service)]|//container:configurator[not(@service)]')) {
+            foreach ($nodes as $node) {
+                if ($services = $this->getChildren($node, 'service')) {
+                    // give it a unique name
+                    $id = sprintf('.%d_%s', ++$count, preg_replace('/^.*\\\\/', '', $services[0]->getAttribute('class')).$suffix);
+                    $node->setAttribute('id', $id);
+                    $node->setAttribute('service', $id);
+
+                    $definitions[$id] = [$services[0], $file];
+                    $services[0]->setAttribute('id', $id);
+
+                    // anonymous services are always private
+                    // we could not use the constant false here, because of XML parsing
+                    $services[0]->setAttribute('public', 'false');
+                }
+            }
         }
 
         // anonymous services "in the wild"
-        if (false === $nodes = $xml->xpath('//container:services/container:service[not(@id)]')) {
-            return $xml;
-        }
-        foreach ($nodes as $node) {
-            // give it a unique name
-            $node['id'] = sprintf('%s_%d', md5($file), ++$count);
-
-            $definitions[(string) $node['id']] = array($node, $file, true);
-            $node->service['id'] = (string) $node['id'];
-        }
-
-        // resolve definitions
-        krsort($definitions);
-        foreach ($definitions as $id => $def) {
-            // anonymous services are always private
-            $def[0]['public'] = false;
-
-            $this->parseDefinition($id, $def[0], $def[1]);
-
-            $oNode = dom_import_simplexml($def[0]);
-            if (true === $def[2]) {
-                $nNode = new \DOMElement('_services');
-                $oNode->parentNode->replaceChild($nNode, $oNode);
-                $nNode->setAttribute('id', $id);
-            } else {
-                $oNode->parentNode->removeChild($oNode);
+        if (false !== $nodes = $xpath->query('//container:services/container:service[not(@id)]')) {
+            foreach ($nodes as $node) {
+                throw new InvalidArgumentException(sprintf('Top-level services must have "id" attribute, none found in "%s" at line %d.', $file, $node->getLineNo()));
             }
         }
 
-        return $xml;
+        // resolve definitions
+        uksort($definitions, 'strnatcmp');
+        foreach (array_reverse($definitions) as $id => list($domElement, $file)) {
+            if (null !== $definition = $this->parseDefinition($domElement, $file, [])) {
+                $this->setDefinition($id, $definition);
+            }
+        }
+    }
+
+    private function getArgumentsAsPhp(\DOMElement $node, string $name, string $file, bool $isChildDefinition = false): array
+    {
+        $arguments = [];
+        foreach ($this->getChildren($node, $name) as $arg) {
+            if ($arg->hasAttribute('name')) {
+                $arg->setAttribute('key', $arg->getAttribute('name'));
+            }
+
+            // this is used by ChildDefinition to overwrite a specific
+            // argument of the parent definition
+            if ($arg->hasAttribute('index')) {
+                $key = ($isChildDefinition ? 'index_' : '').$arg->getAttribute('index');
+            } elseif (!$arg->hasAttribute('key')) {
+                // Append an empty argument, then fetch its key to overwrite it later
+                $arguments[] = null;
+                $keys = array_keys($arguments);
+                $key = array_pop($keys);
+            } else {
+                $key = $arg->getAttribute('key');
+            }
+
+            $onInvalid = $arg->getAttribute('on-invalid');
+            $invalidBehavior = ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE;
+            if ('ignore' == $onInvalid) {
+                $invalidBehavior = ContainerInterface::IGNORE_ON_INVALID_REFERENCE;
+            } elseif ('ignore_uninitialized' == $onInvalid) {
+                $invalidBehavior = ContainerInterface::IGNORE_ON_UNINITIALIZED_REFERENCE;
+            } elseif ('null' == $onInvalid) {
+                $invalidBehavior = ContainerInterface::NULL_ON_INVALID_REFERENCE;
+            }
+
+            switch ($arg->getAttribute('type')) {
+                case 'service':
+                    if ('' === $arg->getAttribute('id')) {
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="service" has no or empty "id" attribute in "%s".', $name, $file));
+                    }
+
+                    $arguments[$key] = new Reference($arg->getAttribute('id'), $invalidBehavior);
+                    break;
+                case 'expression':
+                    if (!class_exists(Expression::class)) {
+                        throw new \LogicException(sprintf('The type="expression" attribute cannot be used without the ExpressionLanguage component. Try running "composer require symfony/expression-language".'));
+                    }
+
+                    $arguments[$key] = new Expression($arg->nodeValue);
+                    break;
+                case 'collection':
+                    $arguments[$key] = $this->getArgumentsAsPhp($arg, $name, $file);
+                    break;
+                case 'iterator':
+                    $arg = $this->getArgumentsAsPhp($arg, $name, $file);
+                    try {
+                        $arguments[$key] = new IteratorArgument($arg);
+                    } catch (InvalidArgumentException $e) {
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="iterator" only accepts collections of type="service" references in "%s".', $name, $file));
+                    }
+                    break;
+                case 'service_locator':
+                    $arg = $this->getArgumentsAsPhp($arg, $name, $file);
+                    try {
+                        $arguments[$key] = new ServiceLocatorArgument($arg);
+                    } catch (InvalidArgumentException $e) {
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="service_locator" only accepts maps of type="service" references in "%s".', $name, $file));
+                    }
+                    break;
+                case 'tagged':
+                case 'tagged_iterator':
+                case 'tagged_locator':
+                    $type = $arg->getAttribute('type');
+                    $forLocator = 'tagged_locator' === $type;
+
+                    if (!$arg->getAttribute('tag')) {
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="%s" has no or empty "tag" attribute in "%s".', $name, $type, $file));
+                    }
+
+                    $arguments[$key] = new TaggedIteratorArgument($arg->getAttribute('tag'), $arg->getAttribute('index-by') ?: null, $arg->getAttribute('default-index-method') ?: null, $forLocator, $arg->getAttribute('default-priority-method') ?: null);
+
+                    if ($forLocator) {
+                        $arguments[$key] = new ServiceLocatorArgument($arguments[$key]);
+                    }
+                    break;
+                case 'binary':
+                    if (false === $value = base64_decode($arg->nodeValue)) {
+                        throw new InvalidArgumentException(sprintf('Tag "<%s>" with type="binary" is not a valid base64 encoded string.', $name));
+                    }
+                    $arguments[$key] = $value;
+                    break;
+                case 'abstract':
+                    $serviceId = $node->getAttribute('id');
+                    $arguments[$key] = new AbstractArgument($serviceId, (string) $key, $arg->nodeValue);
+                    break;
+                case 'string':
+                    $arguments[$key] = $arg->nodeValue;
+                    break;
+                case 'constant':
+                    $arguments[$key] = \constant(trim($arg->nodeValue));
+                    break;
+                default:
+                    $arguments[$key] = XmlUtils::phpize($arg->nodeValue);
+            }
+        }
+
+        return $arguments;
     }
 
     /**
-     * Validates an XML document.
+     * Get child elements by name.
      *
-     * @param DOMDocument $dom
-     * @param string $file
+     * @return \DOMElement[]
      */
-    private function validate(\DOMDocument $dom, $file)
+    private function getChildren(\DOMNode $node, string $name): array
     {
-        $this->validateSchema($dom, $file);
-        $this->validateExtensions($dom, $file);
+        $children = [];
+        foreach ($node->childNodes as $child) {
+            if ($child instanceof \DOMElement && $child->localName === $name && self::NS === $child->namespaceURI) {
+                $children[] = $child;
+            }
+        }
+
+        return $children;
     }
 
     /**
      * Validates a documents XML schema.
      *
-     * @param \DOMDocument $dom
-     * @param string $file
-     * @return void
+     * @return bool
      *
-     * @throws \RuntimeException         When extension references a non-existent XSD file
-     * @throws \InvalidArgumentException When xml doesn't validate its xsd schema
+     * @throws RuntimeException When extension references a non-existent XSD file
      */
-    private function validateSchema(\DOMDocument $dom, $file)
+    public function validateSchema(\DOMDocument $dom)
     {
-        $schemaLocations = array('http://symfony.com/schema/dic/services' => str_replace('\\', '/', __DIR__.'/schema/dic/services/services-1.0.xsd'));
+        $schemaLocations = ['http://symfony.com/schema/dic/services' => str_replace('\\', '/', __DIR__.'/schema/dic/services/services-1.0.xsd')];
 
         if ($element = $dom->documentElement->getAttributeNS('http://www.w3.org/2001/XMLSchema-instance', 'schemaLocation')) {
             $items = preg_split('/\s+/', $element);
-            for ($i = 0, $nb = count($items); $i < $nb; $i += 2) {
+            for ($i = 0, $nb = \count($items); $i < $nb; $i += 2) {
                 if (!$this->container->hasExtension($items[$i])) {
                     continue;
                 }
 
                 if (($extension = $this->container->getExtension($items[$i])) && false !== $extension->getXsdValidationBasePath()) {
-                    $path = str_replace($extension->getNamespace(), str_replace('\\', '/', $extension->getXsdValidationBasePath()).'/', $items[$i + 1]);
+                    $ns = $extension->getNamespace();
+                    $path = str_replace([$ns, str_replace('http://', 'https://', $ns)], str_replace('\\', '/', $extension->getXsdValidationBasePath()).'/', $items[$i + 1]);
 
-                    if (!file_exists($path)) {
-                        throw new \RuntimeException(sprintf('Extension "%s" references a non-existent XSD file "%s"', get_class($extension), $path));
+                    if (!is_file($path)) {
+                        throw new RuntimeException(sprintf('Extension "%s" references a non-existent XSD file "%s".', get_debug_type($extension), $path));
                     }
 
                     $schemaLocations[$items[$i]] = $path;
@@ -322,20 +602,24 @@ class XmlFileLoader extends FileLoader
             }
         }
 
-        $tmpfiles = array();
+        $tmpfiles = [];
         $imports = '';
         foreach ($schemaLocations as $namespace => $location) {
             $parts = explode('/', $location);
-            if (preg_match('#^phar://#i', $location)) {
-                $tmpfile = tempnam(sys_get_temp_dir(), 'sf2');
+            $locationstart = 'file:///';
+            if (0 === stripos($location, 'phar://')) {
+                $tmpfile = tempnam(sys_get_temp_dir(), 'symfony');
                 if ($tmpfile) {
-                    file_put_contents($tmpfile, file_get_contents($location));
+                    copy($location, $tmpfile);
                     $tmpfiles[] = $tmpfile;
                     $parts = explode('/', str_replace('\\', '/', $tmpfile));
+                } else {
+                    array_shift($parts);
+                    $locationstart = 'phar:///';
                 }
             }
-            $drive = '\\' === DIRECTORY_SEPARATOR ? array_shift($parts).'/' : '';
-            $location = 'file:///'.$drive.implode('/', array_map('rawurlencode', $parts));
+            $drive = '\\' === \DIRECTORY_SEPARATOR ? array_shift($parts).'/' : '';
+            $location = $locationstart.$drive.implode('/', array_map('rawurlencode', $parts));
 
             $imports .= sprintf('  <xsd:import namespace="%s" schemaLocation="%s" />'."\n", $namespace, $location);
         }
@@ -353,27 +637,41 @@ $imports
 EOF
         ;
 
-        $current = libxml_use_internal_errors(true);
-        $valid = $dom->schemaValidateSource($source);
+        $disableEntities = libxml_disable_entity_loader(false);
+        $valid = @$dom->schemaValidateSource($source);
+        libxml_disable_entity_loader($disableEntities);
+
         foreach ($tmpfiles as $tmpfile) {
             @unlink($tmpfile);
         }
-        if (!$valid) {
-            throw new \InvalidArgumentException(implode("\n", $this->getXmlErrors()));
+
+        return $valid;
+    }
+
+    private function validateAlias(\DOMElement $alias, string $file)
+    {
+        foreach ($alias->attributes as $name => $node) {
+            if (!\in_array($name, ['alias', 'id', 'public'])) {
+                throw new InvalidArgumentException(sprintf('Invalid attribute "%s" defined for alias "%s" in "%s".', $name, $alias->getAttribute('id'), $file));
+            }
         }
-        libxml_use_internal_errors($current);
+
+        foreach ($alias->childNodes as $child) {
+            if (!$child instanceof \DOMElement || self::NS !== $child->namespaceURI) {
+                continue;
+            }
+            if (!\in_array($child->localName, ['deprecated'], true)) {
+                throw new InvalidArgumentException(sprintf('Invalid child element "%s" defined for alias "%s" in "%s".', $child->localName, $alias->getAttribute('id'), $file));
+            }
+        }
     }
 
     /**
      * Validates an extension.
      *
-     * @param \DOMDocument $dom
-     * @param string $file
-     * @return void
-     *
-     * @throws  \InvalidArgumentException When non valid tag are found or no extension are found
+     * @throws InvalidArgumentException When no extension is found corresponding to a tag
      */
-    private function validateExtensions(\DOMDocument $dom, $file)
+    private function validateExtensions(\DOMDocument $dom, string $file)
     {
         foreach ($dom->documentElement->childNodes as $node) {
             if (!$node instanceof \DOMElement || 'http://symfony.com/schema/dic/services' === $node->namespaceURI) {
@@ -382,58 +680,25 @@ EOF
 
             // can it be handled by an extension?
             if (!$this->container->hasExtension($node->namespaceURI)) {
-                $extensionNamespaces = array_filter(array_map(function ($ext) { return $ext->getNamespace(); }, $this->container->getExtensions()));
-                throw new \InvalidArgumentException(sprintf(
-                    'There is no extension able to load the configuration for "%s" (in %s). Looked for namespace "%s", found %s',
-                    $node->tagName,
-                    $file,
-                    $node->namespaceURI,
-                    $extensionNamespaces ? sprintf('"%s"', implode('", "', $extensionNamespaces)) : 'none'
-                ));
+                $extensionNamespaces = array_filter(array_map(function (ExtensionInterface $ext) { return $ext->getNamespace(); }, $this->container->getExtensions()));
+                throw new InvalidArgumentException(sprintf('There is no extension able to load the configuration for "%s" (in "%s"). Looked for namespace "%s", found "%s".', $node->tagName, $file, $node->namespaceURI, $extensionNamespaces ? implode('", "', $extensionNamespaces) : 'none'));
             }
         }
-    }
-
-    /**
-     * Returns an array of XML errors.
-     *
-     * @return array
-     */
-    private function getXmlErrors()
-    {
-        $errors = array();
-        foreach (libxml_get_errors() as $error) {
-            $errors[] = sprintf('[%s %s] %s (in %s - line %d, column %d)',
-                LIBXML_ERR_WARNING == $error->level ? 'WARNING' : 'ERROR',
-                $error->code,
-                trim($error->message),
-                $error->file ? $error->file : 'n/a',
-                $error->line,
-                $error->column
-            );
-        }
-
-        libxml_clear_errors();
-
-        return $errors;
     }
 
     /**
      * Loads from an extension.
-     *
-     * @param SimpleXMLElement $xml
-     * @return void
      */
-    private function loadFromExtensions(SimpleXMLElement $xml)
+    private function loadFromExtensions(\DOMDocument $xml)
     {
-        foreach (dom_import_simplexml($xml)->childNodes as $node) {
-            if (!$node instanceof \DOMElement || $node->namespaceURI === 'http://symfony.com/schema/dic/services') {
+        foreach ($xml->documentElement->childNodes as $node) {
+            if (!$node instanceof \DOMElement || self::NS === $node->namespaceURI) {
                 continue;
             }
 
             $values = static::convertDomElementToArray($node);
-            if (!is_array($values)) {
-                $values = array();
+            if (!\is_array($values)) {
+                $values = [];
             }
 
             $this->container->loadFromExtension($node->namespaceURI, $values);
@@ -441,7 +706,7 @@ EOF
     }
 
     /**
-     * Converts a \DomElement object to a PHP array.
+     * Converts a \DOMElement object to a PHP array.
      *
      * The following rules applies during the conversion:
      *
@@ -455,56 +720,12 @@ EOF
      *
      *  * The nested-tags are converted to keys (<foo><foo>bar</foo></foo>)
      *
-     * @param \DomElement $element A \DomElement instance
+     * @param \DOMElement $element A \DOMElement instance
      *
-     * @return array A PHP array
+     * @return mixed
      */
-    static public function convertDomElementToArray(\DomElement $element)
+    public static function convertDomElementToArray(\DOMElement $element)
     {
-        $empty = true;
-        $config = array();
-        foreach ($element->attributes as $name => $node) {
-            $config[$name] = SimpleXMLElement::phpize($node->value);
-            $empty = false;
-        }
-
-        $nodeValue = false;
-        foreach ($element->childNodes as $node) {
-            if ($node instanceof \DOMText) {
-                if (trim($node->nodeValue)) {
-                    $nodeValue = trim($node->nodeValue);
-                    $empty = false;
-                }
-            } elseif (!$node instanceof \DOMComment) {
-                if ($node instanceof \DOMElement && '_services' === $node->nodeName) {
-                    $value = new Reference($node->getAttribute('id'));
-                } else {
-                    $value = static::convertDomElementToArray($node);
-                }
-
-                $key = $node->localName;
-                if (isset($config[$key])) {
-                    if (!is_array($config[$key]) || !is_int(key($config[$key]))) {
-                        $config[$key] = array($config[$key]);
-                    }
-                    $config[$key][] = $value;
-                } else {
-                    $config[$key] = $value;
-                }
-
-                $empty = false;
-            }
-        }
-
-        if (false !== $nodeValue) {
-            $value = SimpleXMLElement::phpize($nodeValue);
-            if (count($config)) {
-                $config['value'] = $value;
-            } else {
-                $config = $value;
-            }
-        }
-
-        return !$empty ? $config : null;
+        return XmlUtils::convertDomElementToArray($element);
     }
 }

@@ -11,72 +11,37 @@
 
 namespace Symfony\Bundle\FrameworkBundle\Controller;
 
-use Symfony\Component\HttpKernel\Log\LoggerInterface;
-use Symfony\Component\HttpKernel\Controller\ControllerResolver as BaseControllerResolver;
-use Symfony\Component\DependencyInjection\ContainerInterface;
-use Symfony\Bundle\FrameworkBundle\Controller\ControllerNameParser;
 use Symfony\Component\DependencyInjection\ContainerAwareInterface;
+use Symfony\Component\HttpKernel\Controller\ContainerControllerResolver;
 
 /**
- * ControllerResolver.
- *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class ControllerResolver extends BaseControllerResolver
+class ControllerResolver extends ContainerControllerResolver
 {
-    protected $container;
-    protected $parser;
-
     /**
-     * Constructor.
-     *
-     * @param ContainerInterface   $container A ContainerInterface instance
-     * @param ControllerNameParser $parser    A ControllerNameParser instance
-     * @param LoggerInterface      $logger    A LoggerInterface instance
+     * {@inheritdoc}
      */
-    public function __construct(ContainerInterface $container, ControllerNameParser $parser, LoggerInterface $logger = null)
+    protected function instantiateController($class): object
     {
-        $this->container = $container;
-        $this->parser = $parser;
-
-        parent::__construct($logger);
+        return $this->configureController(parent::instantiateController($class), $class);
     }
 
-    /**
-     * Returns a callable for the given controller.
-     *
-     * @param string $controller A Controller string
-     *
-     * @return mixed A PHP callable
-     */
-    protected function createController($controller)
+    private function configureController($controller, string $class): object
     {
-        if (false === strpos($controller, '::')) {
-            $count = substr_count($controller, ':');
-            if (2 == $count) {
-                // controller in the a:b:c notation then
-                $controller = $this->parser->parse($controller);
-            } elseif (1 == $count) {
-                // controller in the service:method notation
-                list($service, $method) = explode(':', $controller);
-
-                return array($this->container->get($service), $method);
-            } else {
-                throw new \LogicException(sprintf('Unable to parse the controller name "%s".', $controller));
-            }
-        }
-
-        list($class, $method) = explode('::', $controller);
-
-        if (!class_exists($class)) {
-            throw new \InvalidArgumentException(sprintf('Class "%s" does not exist.', $class));
-        }
-
-        $controller = new $class();
         if ($controller instanceof ContainerAwareInterface) {
             $controller->setContainer($this->container);
         }
+        if ($controller instanceof AbstractController) {
+            if (null === $previousContainer = $controller->setContainer($this->container)) {
+                throw new \LogicException(sprintf('"%s" has no container set, did you forget to define it as a service subscriber?', $class));
+            } else {
+                $controller->setContainer($previousContainer);
+            }
+        }
 
-        return array($controller, $method);
+        return $controller;
     }
 }

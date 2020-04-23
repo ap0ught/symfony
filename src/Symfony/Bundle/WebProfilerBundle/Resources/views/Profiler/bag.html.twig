@@ -1,12 +1,20 @@
-<table>
-    <tr>
-        <th>Key</th>
-        <th>Value</th>
-    </tr>
-    {% for key in bag.keys|sort %}
+<table class="{{ class|default('') }}">
+    <thead>
         <tr>
-            <th>{{ key }}</th>
-            <td>{{ bag.get(key)|yaml_dump }}</td>
+            <th scope="col" class="key">{{ labels is defined ? labels[0] : 'Key' }}</th>
+            <th scope="col">{{ labels is defined ? labels[1] : 'Value' }}</th>
         </tr>
-    {% endfor %}
+    </thead>
+    <tbody>
+        {% for key in bag.keys|sort %}
+            <tr>
+                <th>{{ key }}</th>
+                <td>{{ profiler_dump(bag.get(key), maxDepth=maxDepth|default(0)) }}</td>
+            </tr>
+        {% else %}
+            <tr>
+                <td colspan="2">(no data)</td>
+            </tr>
+        {% endfor %}
+    </tbody>
 </table>

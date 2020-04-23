@@ -11,7 +11,7 @@
 
 namespace Symfony\Component\Config\Loader;
 
-use Symfony\Component\Config\Exception\FileLoaderLoadException;
+use Symfony\Component\Config\Exception\LoaderLoadException;
 
 /**
  * DelegatingLoader delegates loading to other loaders using a loader resolver.
@@ -23,43 +23,28 @@ use Symfony\Component\Config\Exception\FileLoaderLoadException;
  */
 class DelegatingLoader extends Loader
 {
-    /**
-     * Constructor.
-     *
-     * @param LoaderResolverInterface $resolver A LoaderResolverInterface instance
-     */
     public function __construct(LoaderResolverInterface $resolver)
     {
         $this->resolver = $resolver;
     }
 
     /**
-     * Loads a resource.
-     *
-     * @param mixed  $resource A resource
-     * @param string $type     The resource type
-     *
-     * @throws FileLoaderLoadException if no loader is found.
+     * {@inheritdoc}
      */
-    public function load($resource, $type = null)
+    public function load($resource, string $type = null)
     {
         if (false === $loader = $this->resolver->resolve($resource, $type)) {
-            throw new FileLoaderLoadException($resource);
+            throw new LoaderLoadException($resource, null, null, null, $type);
         }
 
         return $loader->load($resource, $type);
     }
 
     /**
-     * Returns true if this class supports the given resource.
-     *
-     * @param mixed  $resource A resource
-     * @param string $type     The resource type
-     *
-     * @return Boolean true if this class supports the given resource, false otherwise
+     * {@inheritdoc}
      */
-    public function supports($resource, $type = null)
+    public function supports($resource, string $type = null)
     {
-        return false === $this->resolver->resolve($resource, $type) ? false : true;
+        return false !== $this->resolver->resolve($resource, $type);
     }
 }

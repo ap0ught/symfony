@@ -11,68 +11,62 @@
 
 namespace Symfony\Component\Form;
 
-use Symfony\Component\Form\Exception\FormException;
+use Symfony\Component\Form\Exception\InvalidArgumentException;
 use Symfony\Component\Form\Exception\UnexpectedTypeException;
 
 /**
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 abstract class AbstractExtension implements FormExtensionInterface
 {
     /**
-     * The types provided by this extension
-     * @var array An array of FormTypeInterface
+     * The types provided by this extension.
+     *
+     * @var FormTypeInterface[] An array of FormTypeInterface
      */
     private $types;
 
     /**
-     * The type extensions provided by this extension
-     * @var array An array of FormTypeExtensionInterface
+     * The type extensions provided by this extension.
+     *
+     * @var FormTypeExtensionInterface[] An array of FormTypeExtensionInterface
      */
     private $typeExtensions;
 
     /**
-     * The type guesser provided by this extension
-     * @var FormTypeGuesserInterface
+     * The type guesser provided by this extension.
+     *
+     * @var FormTypeGuesserInterface|null
      */
     private $typeGuesser;
 
     /**
-     * Whether the type guesser has been loaded
-     * @var Boolean
+     * Whether the type guesser has been loaded.
+     *
+     * @var bool
      */
     private $typeGuesserLoaded = false;
 
     /**
-     * Returns a type by name.
-     *
-     * @param string $name The name of the type
-     *
-     * @return FormTypeInterface The type
-     *
-     * @throws FormException if the given type is not supported by this extension
+     * {@inheritdoc}
      */
-    public function getType($name)
+    public function getType(string $name)
     {
         if (null === $this->types) {
             $this->initTypes();
         }
 
         if (!isset($this->types[$name])) {
-            throw new FormException(sprintf('The type "%s" can not be loaded by this extension', $name));
+            throw new InvalidArgumentException(sprintf('The type "%s" can not be loaded by this extension.', $name));
         }
 
         return $this->types[$name];
     }
 
     /**
-     * Returns whether the given type is supported.
-     *
-     * @param string $name The name of the type
-     *
-     * @return Boolean Whether the type is supported by this extension
+     * {@inheritdoc}
      */
-    public function hasType($name)
+    public function hasType(string $name)
     {
         if (null === $this->types) {
             $this->initTypes();
@@ -82,13 +76,9 @@ abstract class AbstractExtension implements FormExtensionInterface
     }
 
     /**
-     * Returns the extensions for the given type.
-     *
-     * @param string $name The name of the type
-     *
-     * @return array An array of extensions as FormTypeExtensionInterface instances
+     * {@inheritdoc}
      */
-    public function getTypeExtensions($name)
+    public function getTypeExtensions(string $name)
     {
         if (null === $this->typeExtensions) {
             $this->initTypeExtensions();
@@ -96,29 +86,23 @@ abstract class AbstractExtension implements FormExtensionInterface
 
         return isset($this->typeExtensions[$name])
             ? $this->typeExtensions[$name]
-            : array();
+            : [];
     }
 
     /**
-     * Returns whether this extension provides type extensions for the given type.
-     *
-     * @param string $name The name of the type
-     *
-     * @return Boolean Whether the given type has extensions
+     * {@inheritdoc}
      */
-    public function hasTypeExtensions($name)
+    public function hasTypeExtensions(string $name)
     {
         if (null === $this->typeExtensions) {
             $this->initTypeExtensions();
         }
 
-        return isset($this->typeExtensions[$name]) && count($this->typeExtensions[$name]) > 0;
+        return isset($this->typeExtensions[$name]) && \count($this->typeExtensions[$name]) > 0;
     }
 
     /**
-     * Returns the type guesser provided by this extension.
-     *
-     * @return FormTypeGuesserInterface|null The type guesser
+     * {@inheritdoc}
      */
     public function getTypeGuesser()
     {
@@ -132,27 +116,27 @@ abstract class AbstractExtension implements FormExtensionInterface
     /**
      * Registers the types.
      *
-     * @return array An array of FormTypeInterface instances
+     * @return FormTypeInterface[] An array of FormTypeInterface instances
      */
     protected function loadTypes()
     {
-        return array();
+        return [];
     }
 
     /**
      * Registers the type extensions.
      *
-     * @return array An array of FormTypeExtensionInterface instances
+     * @return FormTypeExtensionInterface[] An array of FormTypeExtensionInterface instances
      */
     protected function loadTypeExtensions()
     {
-        return array();
+        return [];
     }
 
     /**
      * Registers the type guesser.
      *
-     * @return FormTypeGuesserInterface|null A type guesser
+     * @return FormTypeGuesserInterface|null
      */
     protected function loadTypeGuesser()
     {
@@ -166,14 +150,14 @@ abstract class AbstractExtension implements FormExtensionInterface
      */
     private function initTypes()
     {
-        $this->types = array();
+        $this->types = [];
 
         foreach ($this->loadTypes() as $type) {
             if (!$type instanceof FormTypeInterface) {
                 throw new UnexpectedTypeException($type, 'Symfony\Component\Form\FormTypeInterface');
             }
 
-            $this->types[$type->getName()] = $type;
+            $this->types[\get_class($type)] = $type;
         }
     }
 
@@ -185,16 +169,16 @@ abstract class AbstractExtension implements FormExtensionInterface
      */
     private function initTypeExtensions()
     {
-        $this->typeExtensions = array();
+        $this->typeExtensions = [];
 
         foreach ($this->loadTypeExtensions() as $extension) {
             if (!$extension instanceof FormTypeExtensionInterface) {
                 throw new UnexpectedTypeException($extension, 'Symfony\Component\Form\FormTypeExtensionInterface');
             }
 
-            $type = $extension->getExtendedType();
-
-            $this->typeExtensions[$type][] = $extension;
+            foreach ($extension::getExtendedTypes() as $extendedType) {
+                $this->typeExtensions[$extendedType][] = $extension;
+            }
         }
     }
 

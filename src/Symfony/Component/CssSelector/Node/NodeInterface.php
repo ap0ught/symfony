@@ -12,26 +12,20 @@
 namespace Symfony\Component\CssSelector\Node;
 
 /**
- * ClassNode represents a "selector.className" node.
+ * Interface for nodes.
  *
- * This component is a port of the Python lxml library,
- * which is copyright Infrae and distributed under the BSD license.
+ * This component is a port of the Python cssselect library,
+ * which is copyright Ian Bicking, @see https://github.com/SimonSapin/cssselect.
  *
- * @author Fabien Potencier <fabien@symfony.com>
+ * @author Jean-François Simon <jeanfrancois.simon@sensiolabs.com>
+ *
+ * @internal
  */
 interface NodeInterface
 {
-    /**
-     * Returns a string representation of the object.
-     *
-     * @return string The string representation
-     */
-    function __toString();
+    public function getNodeName(): string;
 
-    /**
-     * @return XPathExpr The XPath expression
-     *
-     * @throws ParseException When unknown operator is found
-     */
-    function toXpath();
+    public function getSpecificity(): Specificity;
+
+    public function __toString(): string;
 }

@@ -11,8 +11,10 @@
 
 namespace Symfony\Component\Routing\Loader;
 
-use Symfony\Component\Config\Resource\FileResource;
 use Symfony\Component\Config\Loader\FileLoader;
+use Symfony\Component\Config\Resource\FileResource;
+use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
+use Symfony\Component\Routing\RouteCollection;
 
 /**
  * PhpFileLoader loads routes from a PHP file.
@@ -20,45 +22,64 @@ use Symfony\Component\Config\Loader\FileLoader;
  * The file must return a RouteCollection instance.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
+ * @author Nicolas grekas <p@tchwork.com>
+ * @author Jules Pietri <jules@heahprod.com>
  */
 class PhpFileLoader extends FileLoader
 {
     /**
      * Loads a PHP file.
      *
-     * @param mixed  $file A PHP file path
-     * @param string $type The resource type
+     * @param string      $file A PHP file path
+     * @param string|null $type The resource type
      *
-     * @api
+     * @return RouteCollection A RouteCollection instance
      */
-    public function load($file, $type = null)
+    public function load($file, string $type = null)
     {
-        // the loader variable is exposed to the included file below
-        $loader = $this;
-
         $path = $this->locator->locate($file);
-        $this->setCurrentDir(dirname($path));
+        $this->setCurrentDir(\dirname($path));
 
-        $collection = include $path;
+        // the closure forbids access to the private scope in the included file
+        $loader = $this;
+        $load = \Closure::bind(static function ($file) use ($loader) {
+            return include $file;
+        }, null, ProtectedPhpFileLoader::class);
+
+        $result = $load($path);
+
+        if (\is_object($result) && \is_callable($result)) {
+            $collection = $this->callConfigurator($result, $path, $file);
+        } else {
+            $collection = $result;
+        }
+
         $collection->addResource(new FileResource($path));
 
         return $collection;
     }
 
     /**
-     * Returns true if this class supports the given resource.
-     *
-     * @param mixed  $resource A resource
-     * @param string $type     The resource type
-     *
-     * @return Boolean True if this class supports the given resource, false otherwise
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function supports($resource, $type = null)
+    public function supports($resource, string $type = null)
     {
-        return is_string($resource) && 'php' === pathinfo($resource, PATHINFO_EXTENSION) && (!$type || 'php' === $type);
+        return \is_string($resource) && 'php' === pathinfo($resource, PATHINFO_EXTENSION) && (!$type || 'php' === $type);
     }
+
+    protected function callConfigurator(callable $result, string $path, string $file): RouteCollection
+    {
+        $collection = new RouteCollection();
+
+        $result(new RoutingConfigurator($collection, $this, $path, $file));
+
+        return $collection;
+    }
+}
+
+/**
+ * @internal
+ */
+final class ProtectedPhpFileLoader extends PhpFileLoader
+{
 }

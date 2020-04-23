@@ -11,8 +11,12 @@
 
 namespace Symfony\Component\Security\Core\Encoder;
 
+use Symfony\Component\Security\Core\Exception\BadCredentialsException;
+
 /**
- * PlaintextPasswordEncoder does not do any encoding.
+ * PlaintextPasswordEncoder does not do any encoding but is useful in testing environments.
+ *
+ * As this encoder is not cryptographically secure, usage of it in production environments is discouraged.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
@@ -20,7 +24,10 @@ class PlaintextPasswordEncoder extends BasePasswordEncoder
 {
     private $ignorePasswordCase;
 
-    public function __construct($ignorePasswordCase = false)
+    /**
+     * @param bool $ignorePasswordCase Compare password case-insensitive
+     */
+    public function __construct(bool $ignorePasswordCase = false)
     {
         $this->ignorePasswordCase = $ignorePasswordCase;
     }
@@ -28,16 +35,24 @@ class PlaintextPasswordEncoder extends BasePasswordEncoder
     /**
      * {@inheritdoc}
      */
-    public function encodePassword($raw, $salt)
+    public function encodePassword(string $raw, ?string $salt)
     {
+        if ($this->isPasswordTooLong($raw)) {
+            throw new BadCredentialsException('Invalid password.');
+        }
+
         return $this->mergePasswordAndSalt($raw, $salt);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function isPasswordValid($encoded, $raw, $salt)
+    public function isPasswordValid(string $encoded, string $raw, ?string $salt)
     {
+        if ($this->isPasswordTooLong($raw)) {
+            return false;
+        }
+
         $pass2 = $this->mergePasswordAndSalt($raw, $salt);
 
         if (!$this->ignorePasswordCase) {

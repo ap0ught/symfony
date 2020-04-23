@@ -1,18 +1,15 @@
 <?php
 
-namespace Symfony\Component\Serializer\Normalizer;
-
-use Symfony\Component\Serializer\SerializerInterface;
-use Symfony\Component\Serializer\Exception\RuntimeException;
-
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
+
+namespace Symfony\Component\Serializer\Normalizer;
 
 /**
  * Converts between objects with getter and setter methods and arrays.
@@ -33,100 +30,40 @@ use Symfony\Component\Serializer\Exception\RuntimeException;
  * takes place.
  *
  * @author Nils Adermann <naderman@naderman.de>
+ * @author Kévin Dunglas <dunglas@gmail.com>
  */
-class GetSetMethodNormalizer extends SerializerAwareNormalizer
+class GetSetMethodNormalizer extends AbstractObjectNormalizer
 {
+    private static $setterAccessibleCache = [];
+
     /**
      * {@inheritdoc}
      */
-    public function normalize($object, $format = null)
+    public function supportsNormalization($data, string $format = null)
     {
-        $reflectionObject = new \ReflectionObject($object);
-        $reflectionMethods = $reflectionObject->getMethods(\ReflectionMethod::IS_PUBLIC);
-
-        $attributes = array();
-        foreach ($reflectionMethods as $method) {
-            if ($this->isGetMethod($method)) {
-                $attributeName = strtolower(substr($method->getName(), 3));
-
-                $attributeValue = $method->invoke($object);
-                if (null !== $attributeValue && !is_scalar($attributeValue)) {
-                    $attributeValue = $this->serializer->normalize($attributeValue, $format);
-                }
-
-                $attributes[$attributeName] = $attributeValue;
-            }
-        }
-
-        return $attributes;
+        return parent::supportsNormalization($data, $format) && $this->supports(\get_class($data));
     }
 
     /**
      * {@inheritdoc}
      */
-    public function denormalize($data, $class, $format = null)
+    public function supportsDenormalization($data, string $type, string $format = null)
     {
-        $reflectionClass = new \ReflectionClass($class);
-        $constructor = $reflectionClass->getConstructor();
-
-        if ($constructor) {
-            $constructorParameters = $constructor->getParameters();
-
-            $params = array();
-            foreach ($constructorParameters as $constructorParameter) {
-                $paramName = strtolower($constructorParameter->getName());
-
-                if (isset($data[$paramName])) {
-                    $params[] = $data[$paramName];
-                    // don't run set for a parameter passed to the constructor
-                    unset($data[$paramName]);
-                } else if (!$constructorParameter->isOptional()) {
-                    throw new RuntimeException(
-                        'Cannot create an instance of '.$class.
-                        ' from serialized data because its constructor requires '.
-                        'parameter "'.$constructorParameter->getName().
-                        '" to be present.');
-                }
-            }
-
-            $object = $reflectionClass->newInstanceArgs($params);
-        } else {
-            $object = new $class;
-        }
-
-        foreach ($data as $attribute => $value) {
-            $setter = 'set'.$attribute;
-            if (method_exists($object, $setter)) {
-                $object->$setter($value);
-            }
-        }
-
-        return $object;
+        return parent::supportsDenormalization($data, $type, $format) && $this->supports($type);
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function supportsNormalization($data, $format = null)
+    public function hasCacheableSupportsMethod(): bool
     {
-        return is_object($data) && $this->supports(get_class($data));
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function supportsDenormalization($data, $type, $format = null)
-    {
-        return $this->supports($type);
+        return __CLASS__ === static::class;
     }
 
     /**
      * Checks if the given class has any get{Property} method.
-     *
-     * @param string $class
-     * @return Boolean
      */
-    private function supports($class)
+    private function supports(string $class): bool
     {
         $class = new \ReflectionClass($class);
         $methods = $class->getMethods(\ReflectionMethod::IS_PUBLIC);
@@ -140,17 +77,86 @@ class GetSetMethodNormalizer extends SerializerAwareNormalizer
     }
 
     /**
-     * Checks if a method's name is get.* and can be called without parameters.
-     *
-     * @param ReflectionMethod $method the method to check
-     * @return Boolean whether the method is a getter.
+     * Checks if a method's name is get.* or is.*, and can be called without parameters.
      */
-    private function isGetMethod(\ReflectionMethod $method)
+    private function isGetMethod(\ReflectionMethod $method): bool
     {
-        return (
-            0 === strpos($method->getName(), 'get') &&
-            3 < strlen($method->getName()) &&
-            0 === $method->getNumberOfRequiredParameters()
-        );
+        $methodLength = \strlen($method->name);
+
+        return
+            !$method->isStatic() &&
+            (
+                ((0 === strpos($method->name, 'get') && 3 < $methodLength) ||
+                (0 === strpos($method->name, 'is') && 2 < $methodLength) ||
+                (0 === strpos($method->name, 'has') && 3 < $methodLength)) &&
+                0 === $method->getNumberOfRequiredParameters()
+            )
+        ;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function extractAttributes(object $object, string $format = null, array $context = [])
+    {
+        $reflectionObject = new \ReflectionObject($object);
+        $reflectionMethods = $reflectionObject->getMethods(\ReflectionMethod::IS_PUBLIC);
+
+        $attributes = [];
+        foreach ($reflectionMethods as $method) {
+            if (!$this->isGetMethod($method)) {
+                continue;
+            }
+
+            $attributeName = lcfirst(substr($method->name, 0 === strpos($method->name, 'is') ? 2 : 3));
+
+            if ($this->isAllowedAttribute($object, $attributeName, $format, $context)) {
+                $attributes[] = $attributeName;
+            }
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function getAttributeValue(object $object, string $attribute, string $format = null, array $context = [])
+    {
+        $ucfirsted = ucfirst($attribute);
+
+        $getter = 'get'.$ucfirsted;
+        if (\is_callable([$object, $getter])) {
+            return $object->$getter();
+        }
+
+        $isser = 'is'.$ucfirsted;
+        if (\is_callable([$object, $isser])) {
+            return $object->$isser();
+        }
+
+        $haser = 'has'.$ucfirsted;
+        if (\is_callable([$object, $haser])) {
+            return $object->$haser();
+        }
+
+        return null;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    protected function setAttributeValue(object $object, string $attribute, $value, string $format = null, array $context = [])
+    {
+        $setter = 'set'.ucfirst($attribute);
+        $key = \get_class($object).':'.$setter;
+
+        if (!isset(self::$setterAccessibleCache[$key])) {
+            self::$setterAccessibleCache[$key] = \is_callable([$object, $setter]) && !(new \ReflectionMethod($object, $setter))->isStatic();
+        }
+
+        if (self::$setterAccessibleCache[$key]) {
+            $object->$setter($value);
+        }
     }
 }

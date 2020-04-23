@@ -1,38 +1,63 @@
 <?php
 
-namespace Symfony\Component\Serializer\Encoder;
-
-use Symfony\Component\Serializer\SerializerInterface;
-
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
+namespace Symfony\Component\Serializer\Encoder;
+
 /**
- * Encodes JSON data
+ * Encodes JSON data.
  *
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
 class JsonEncoder implements EncoderInterface, DecoderInterface
 {
-    /**
-     * {@inheritdoc}
-     */
-    public function encode($data, $format)
+    const FORMAT = 'json';
+
+    protected $encodingImpl;
+    protected $decodingImpl;
+
+    public function __construct(JsonEncode $encodingImpl = null, JsonDecode $decodingImpl = null)
     {
-        return json_encode($data);
+        $this->encodingImpl = $encodingImpl ?: new JsonEncode();
+        $this->decodingImpl = $decodingImpl ?: new JsonDecode([JsonDecode::ASSOCIATIVE => true]);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function decode($data, $format)
+    public function encode($data, string $format, array $context = [])
     {
-        return json_decode($data, true);
+        return $this->encodingImpl->encode($data, self::FORMAT, $context);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function decode(string $data, string $format, array $context = [])
+    {
+        return $this->decodingImpl->decode($data, self::FORMAT, $context);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function supportsEncoding(string $format)
+    {
+        return self::FORMAT === $format;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function supportsDecoding(string $format)
+    {
+        return self::FORMAT === $format;
     }
 }

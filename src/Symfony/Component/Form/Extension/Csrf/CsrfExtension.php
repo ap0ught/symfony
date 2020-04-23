@@ -11,48 +11,35 @@
 
 namespace Symfony\Component\Form\Extension\Csrf;
 
-use Symfony\Component\Form\Extension\Csrf\Type;
-use Symfony\Component\Form\Extension\Csrf\CsrfProvider\CsrfProviderInterface;
 use Symfony\Component\Form\AbstractExtension;
+use Symfony\Component\Security\Csrf\CsrfTokenManagerInterface;
+use Symfony\Contracts\Translation\TranslatorInterface;
 
 /**
- * This extension protects forms by using a CSRF token
+ * This extension protects forms by using a CSRF token.
+ *
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class CsrfExtension extends AbstractExtension
 {
-    private $csrfProvider;
+    private $tokenManager;
+    private $translator;
+    private $translationDomain;
 
-    /**
-     * Constructor.
-     *
-     * @param CsrfProviderInterface $csrfProvider The CSRF provider
-     */
-    public function __construct(CsrfProviderInterface $csrfProvider)
+    public function __construct(CsrfTokenManagerInterface $tokenManager, TranslatorInterface $translator = null, string $translationDomain = null)
     {
-        $this->csrfProvider = $csrfProvider;
+        $this->tokenManager = $tokenManager;
+        $this->translator = $translator;
+        $this->translationDomain = $translationDomain;
     }
 
     /**
-     * {@inheritDoc}
-     */
-    protected function loadTypes()
-    {
-        return array(
-            new Type\CsrfType($this->csrfProvider),
-        );
-    }
-
-    /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function loadTypeExtensions()
     {
-        return array(
-            new Type\ChoiceTypeCsrfExtension(),
-            new Type\DateTypeCsrfExtension(),
-            new Type\FormTypeCsrfExtension(),
-            new Type\RepeatedTypeCsrfExtension(),
-            new Type\TimeTypeCsrfExtension(),
-        );
+        return [
+            new Type\FormTypeCsrfExtension($this->tokenManager, true, '_token', $this->translator, $this->translationDomain),
+        ];
     }
 }

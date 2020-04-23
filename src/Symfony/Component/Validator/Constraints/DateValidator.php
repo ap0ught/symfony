@@ -14,46 +14,62 @@ namespace Symfony\Component\Validator\Constraints;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
 use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class DateValidator extends ConstraintValidator
 {
-    const PATTERN = '/^(\d{4})-(\d{2})-(\d{2})$/';
+    const PATTERN = '/^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/';
 
     /**
-     * Checks if the passed value is valid.
+     * Checks whether a date is valid.
      *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * @internal
      */
-    public function isValid($value, Constraint $constraint)
+    public static function checkDate(int $year, int $month, int $day): bool
     {
+        return checkdate($month, $day, $year);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function validate($value, Constraint $constraint)
+    {
+        if (!$constraint instanceof Date) {
+            throw new UnexpectedTypeException($constraint, Date::class);
+        }
+
         if (null === $value || '' === $value) {
-            return true;
+            return;
         }
 
-        if ($value instanceof \DateTime) {
-            return true;
-        }
-
-        if (!is_scalar($value) && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!is_scalar($value) && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
         $value = (string) $value;
 
         if (!preg_match(static::PATTERN, $value, $matches)) {
-            $this->setMessage($constraint->message, array('{{ value }}' => $value));
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($value))
+                ->setCode(Date::INVALID_FORMAT_ERROR)
+                ->addViolation();
 
-            return false;
+            return;
         }
 
-        return checkdate($matches[2], $matches[3], $matches[1]);
+        if (!self::checkDate(
+          $matches['year'] ?? $matches[1],
+          $matches['month'] ?? $matches[2],
+          $matches['day'] ?? $matches[3]
+        )) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($value))
+                ->setCode(Date::INVALID_DATE_ERROR)
+                ->addViolation();
+        }
     }
 }

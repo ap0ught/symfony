@@ -12,11 +12,18 @@
 namespace Symfony\Component\Validator\Mapping\Loader;
 
 use Doctrine\Common\Annotations\Reader;
+use Symfony\Component\Validator\Constraint;
+use Symfony\Component\Validator\Constraints\Callback;
+use Symfony\Component\Validator\Constraints\GroupSequence;
+use Symfony\Component\Validator\Constraints\GroupSequenceProvider;
 use Symfony\Component\Validator\Exception\MappingException;
 use Symfony\Component\Validator\Mapping\ClassMetadata;
-use Symfony\Component\Validator\Constraints\GroupSequence;
-use Symfony\Component\Validator\Constraint;
 
+/**
+ * Loads validation metadata using a Doctrine annotation {@link Reader}.
+ *
+ * @author Bernhard Schussek <bschussek@gmail.com>
+ */
 class AnnotationLoader implements LoaderInterface
 {
     protected $reader;
@@ -27,52 +34,58 @@ class AnnotationLoader implements LoaderInterface
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function loadClassMetadata(ClassMetadata $metadata)
     {
         $reflClass = $metadata->getReflectionClass();
-        $className = $reflClass->getName();
-        $loaded = false;
+        $className = $reflClass->name;
+        $success = false;
 
         foreach ($this->reader->getClassAnnotations($reflClass) as $constraint) {
             if ($constraint instanceof GroupSequence) {
                 $metadata->setGroupSequence($constraint->groups);
+            } elseif ($constraint instanceof GroupSequenceProvider) {
+                $metadata->setGroupSequenceProvider(true);
             } elseif ($constraint instanceof Constraint) {
                 $metadata->addConstraint($constraint);
             }
 
-            $loaded = true;
+            $success = true;
         }
 
         foreach ($reflClass->getProperties() as $property) {
-            if ($property->getDeclaringClass()->getName() == $className) {
+            if ($property->getDeclaringClass()->name === $className) {
                 foreach ($this->reader->getPropertyAnnotations($property) as $constraint) {
                     if ($constraint instanceof Constraint) {
-                        $metadata->addPropertyConstraint($property->getName(), $constraint);
+                        $metadata->addPropertyConstraint($property->name, $constraint);
                     }
 
-                    $loaded = true;
+                    $success = true;
                 }
             }
         }
 
         foreach ($reflClass->getMethods() as $method) {
-            if ($method->getDeclaringClass()->getName() ==  $className) {
+            if ($method->getDeclaringClass()->name === $className) {
                 foreach ($this->reader->getMethodAnnotations($method) as $constraint) {
-                    if ($constraint instanceof Constraint) {
-                        if (preg_match('/^(get|is)(.+)$/i', $method->getName(), $matches)) {
-                            $metadata->addGetterConstraint(lcfirst($matches[2]), $constraint);
+                    if ($constraint instanceof Callback) {
+                        $constraint->callback = $method->getName();
+
+                        $metadata->addConstraint($constraint);
+                    } elseif ($constraint instanceof Constraint) {
+                        if (preg_match('/^(get|is|has)(.+)$/i', $method->name, $matches)) {
+                            $metadata->addGetterMethodConstraint(lcfirst($matches[2]), $matches[0], $constraint);
                         } else {
-                            throw new MappingException(sprintf('The constraint on "%s::%s" cannot be added. Constraints can only be added on methods beginning with "get" or "is".', $className, $method->getName()));
+                            throw new MappingException(sprintf('The constraint on "%s::%s" cannot be added. Constraints can only be added on methods beginning with "get", "is" or "has".', $className, $method->name));
                         }
                     }
 
-                    $loaded = true;
+                    $success = true;
                 }
             }
         }
 
-        return $loaded;
+        return $success;
     }
 }

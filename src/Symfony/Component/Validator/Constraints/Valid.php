@@ -15,10 +15,31 @@ use Symfony\Component\Validator\Constraint;
 
 /**
  * @Annotation
+ * @Target({"PROPERTY", "METHOD", "ANNOTATION"})
  *
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class Valid extends Constraint
 {
     public $traverse = true;
+
+    public function __get(string $option)
+    {
+        if ('groups' === $option) {
+            // when this is reached, no groups have been configured
+            return null;
+        }
+
+        return parent::__get($option);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function addImplicitGroupName($group)
+    {
+        if (null !== $this->groups) {
+            parent::addImplicitGroupName($group);
+        }
+    }
 }

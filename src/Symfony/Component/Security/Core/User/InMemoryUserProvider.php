@@ -11,8 +11,8 @@
 
 namespace Symfony\Component\Security\Core\User;
 
-use Symfony\Component\Security\Core\Exception\UsernameNotFoundException;
 use Symfony\Component\Security\Core\Exception\UnsupportedUserException;
+use Symfony\Component\Security\Core\Exception\UsernameNotFoundException;
 
 /**
  * InMemoryUserProvider is a simple non persistent user provider.
@@ -27,19 +27,17 @@ class InMemoryUserProvider implements UserProviderInterface
     private $users;
 
     /**
-     * Constructor.
-     *
      * The user array is a hash where the keys are usernames and the values are
      * an array of attributes: 'password', 'enabled', and 'roles'.
      *
      * @param array $users An array of users
      */
-    public function __construct(array $users = array())
+    public function __construct(array $users = [])
     {
         foreach ($users as $username => $attributes) {
             $password = isset($attributes['password']) ? $attributes['password'] : null;
             $enabled = isset($attributes['enabled']) ? $attributes['enabled'] : true;
-            $roles = isset($attributes['roles']) ? $attributes['roles'] : array();
+            $roles = isset($attributes['roles']) ? $attributes['roles'] : [];
             $user = new User($username, $password, $roles, $enabled, true, true, true);
 
             $this->createUser($user);
@@ -49,12 +47,12 @@ class InMemoryUserProvider implements UserProviderInterface
     /**
      * Adds a new User to the provider.
      *
-     * @param UserInterface $user A UserInterface instance
+     * @throws \LogicException
      */
     public function createUser(UserInterface $user)
     {
         if (isset($this->users[strtolower($user->getUsername())])) {
-            throw new \LogicException('Another user with the same username already exist.');
+            throw new \LogicException('Another user with the same username already exists.');
         }
 
         $this->users[strtolower($user->getUsername())] = $user;
@@ -63,35 +61,49 @@ class InMemoryUserProvider implements UserProviderInterface
     /**
      * {@inheritdoc}
      */
-    public function loadUserByUsername($username)
+    public function loadUserByUsername(string $username)
     {
-        if (!isset($this->users[strtolower($username)])) {
-            throw new UsernameNotFoundException(sprintf('Username "%s" does not exist.', $username));
-        }
+        $user = $this->getUser($username);
 
-        $user = $this->users[strtolower($username)];
-
-        return new User($user->getUsername(), $user->getPassword(), $user->getRoles(), $user->isEnabled(), $user->isAccountNonExpired(),
-                $user->isCredentialsNonExpired(), $user->isAccountNonLocked());
+        return new User($user->getUsername(), $user->getPassword(), $user->getRoles(), $user->isEnabled(), $user->isAccountNonExpired(), $user->isCredentialsNonExpired(), $user->isAccountNonLocked());
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function refreshUser(UserInterface $user)
     {
         if (!$user instanceof User) {
-            throw new UnsupportedUserException(sprintf('Instances of "%s" are not supported.', get_class($user)));
+            throw new UnsupportedUserException(sprintf('Instances of "%s" are not supported.', get_debug_type($user)));
         }
 
-        return $this->loadUserByUsername($user->getUsername());
+        $storedUser = $this->getUser($user->getUsername());
+
+        return new User($storedUser->getUsername(), $storedUser->getPassword(), $storedUser->getRoles(), $storedUser->isEnabled(), $storedUser->isAccountNonExpired(), $storedUser->isCredentialsNonExpired() && $storedUser->getPassword() === $user->getPassword(), $storedUser->isAccountNonLocked());
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function supportsClass($class)
+    public function supportsClass(string $class)
     {
-        return $class === 'Symfony\Component\Security\Core\User\User';
+        return 'Symfony\Component\Security\Core\User\User' === $class;
+    }
+
+    /**
+     * Returns the user by given username.
+     *
+     * @throws UsernameNotFoundException if user whose given username does not exist
+     */
+    private function getUser(string $username): User
+    {
+        if (!isset($this->users[strtolower($username)])) {
+            $ex = new UsernameNotFoundException(sprintf('Username "%s" does not exist.', $username));
+            $ex->setUsername($username);
+
+            throw $ex;
+        }
+
+        return $this->users[strtolower($username)];
     }
 }

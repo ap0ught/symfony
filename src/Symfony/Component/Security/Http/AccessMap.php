@@ -11,8 +11,8 @@
 
 namespace Symfony\Component\Security\Http;
 
-use Symfony\Component\HttpFoundation\RequestMatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\RequestMatcherInterface;
 
 /**
  * AccessMap allows configuration of different access control rules for
@@ -20,30 +20,30 @@ use Symfony\Component\HttpFoundation\Request;
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class AccessMap
+class AccessMap implements AccessMapInterface
 {
-    private $map = array();
+    private $map = [];
 
     /**
-     * Constructor.
-     *
-     * @param RequestMatcherInterface $requestMatcher A RequestMatcherInterface instance
-     * @param array                   $roles          An array of roles needed to access the resource
-     * @param string|null             $channel        The channel to enforce (http, https, or null)
+     * @param array       $attributes An array of attributes to pass to the access decision manager (like roles)
+     * @param string|null $channel    The channel to enforce (http, https, or null)
      */
-    public function add(RequestMatcherInterface $requestMatcher, array $roles = array(), $channel = null)
+    public function add(RequestMatcherInterface $requestMatcher, array $attributes = [], string $channel = null)
     {
-        $this->map[] = array($requestMatcher, $roles, $channel);
+        $this->map[] = [$requestMatcher, $attributes, $channel];
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getPatterns(Request $request)
     {
         foreach ($this->map as $elements) {
             if (null === $elements[0] || $elements[0]->matches($request)) {
-                return array($elements[1], $elements[2]);
+                return [$elements[1], $elements[2]];
             }
         }
 
-        return array(null, null);
+        return [null, null];
     }
 }

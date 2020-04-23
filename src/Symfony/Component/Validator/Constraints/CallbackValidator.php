@@ -13,71 +13,49 @@ namespace Symfony\Component\Validator\Constraints;
 
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
-use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 use Symfony\Component\Validator\Exception\ConstraintDefinitionException;
+use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 
 /**
- * Validator for Callback constraint
+ * Validator for Callback constraint.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
- *
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class CallbackValidator extends ConstraintValidator
 {
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($object, Constraint $constraint)
+    public function validate($object, Constraint $constraint)
     {
-        if (null === $object) {
-            return true;
+        if (!$constraint instanceof Callback) {
+            throw new UnexpectedTypeException($constraint, Callback::class);
         }
 
-        // has to be an array so that we can differentiate between callables
-        // and method names
-        if (!is_array($constraint->methods)) {
-            throw new UnexpectedTypeException($constraint->methods, 'array');
-        }
-
-        $methods = $constraint->methods;
-        $context = $this->context;
-
-        // save context state
-        $currentClass = $context->getCurrentClass();
-        $currentProperty = $context->getCurrentProperty();
-        $group = $context->getGroup();
-        $propertyPath = $context->getPropertyPath();
-
-        foreach ($methods as $method) {
-            if (is_array($method) || $method instanceof \Closure) {
-                if (!is_callable($method)) {
-                    throw new ConstraintDefinitionException(sprintf('"%s::%s" targeted by Callback constraint is not a valid callable', $method[0], $method[1]));
+        $method = $constraint->callback;
+        if ($method instanceof \Closure) {
+            $method($object, $this->context, $constraint->payload);
+        } elseif (\is_array($method)) {
+            if (!\is_callable($method)) {
+                if (isset($method[0]) && \is_object($method[0])) {
+                    $method[0] = \get_class($method[0]);
                 }
-
-                call_user_func($method, $object, $context);
-            } else {
-                if (!method_exists($object, $method)) {
-                    throw new ConstraintDefinitionException(sprintf('Method "%s" targeted by Callback constraint does not exist', $method));
-                }
-
-                $object->$method($context);
+                throw new ConstraintDefinitionException(json_encode($method).' targeted by Callback constraint is not a valid callable.');
             }
 
-            // restore context state
-            $context->setCurrentClass($currentClass);
-            $context->setCurrentProperty($currentProperty);
-            $context->setGroup($group);
-            $context->setPropertyPath($propertyPath);
-        }
+            $method($object, $this->context, $constraint->payload);
+        } elseif (null !== $object) {
+            if (!method_exists($object, $method)) {
+                throw new ConstraintDefinitionException(sprintf('Method "%s" targeted by Callback constraint does not exist in class "%s".', $method, get_debug_type($object)));
+            }
 
-        return true;
+            $reflMethod = new \ReflectionMethod($object, $method);
+
+            if ($reflMethod->isStatic()) {
+                $reflMethod->invoke(null, $object, $this->context, $constraint->payload);
+            } else {
+                $reflMethod->invoke($object, $this->context, $constraint->payload);
+            }
+        }
     }
 }

@@ -18,58 +18,113 @@ use Symfony\Component\Form\Exception\UnexpectedTypeException;
 /**
  * Transforms between a normalized format (integer or float) and a percentage value.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
+ * @author Bernhard Schussek <bschussek@gmail.com>
  * @author Florian Eckerstorfer <florian@eckerstorfer.org>
  */
 class PercentToLocalizedStringTransformer implements DataTransformerInterface
 {
+    /**
+     * Rounds a number towards positive infinity.
+     *
+     * Rounds 1.4 to 2 and -1.4 to -1.
+     */
+    const ROUND_CEILING = \NumberFormatter::ROUND_CEILING;
+
+    /**
+     * Rounds a number towards negative infinity.
+     *
+     * Rounds 1.4 to 1 and -1.4 to -2.
+     */
+    const ROUND_FLOOR = \NumberFormatter::ROUND_FLOOR;
+
+    /**
+     * Rounds a number away from zero.
+     *
+     * Rounds 1.4 to 2 and -1.4 to -2.
+     */
+    const ROUND_UP = \NumberFormatter::ROUND_UP;
+
+    /**
+     * Rounds a number towards zero.
+     *
+     * Rounds 1.4 to 1 and -1.4 to -1.
+     */
+    const ROUND_DOWN = \NumberFormatter::ROUND_DOWN;
+
+    /**
+     * Rounds to the nearest number and halves to the next even number.
+     *
+     * Rounds 2.5, 1.6 and 1.5 to 2 and 1.4 to 1.
+     */
+    const ROUND_HALF_EVEN = \NumberFormatter::ROUND_HALFEVEN;
+
+    /**
+     * Rounds to the nearest number and halves away from zero.
+     *
+     * Rounds 2.5 to 3, 1.6 and 1.5 to 2 and 1.4 to 1.
+     */
+    const ROUND_HALF_UP = \NumberFormatter::ROUND_HALFUP;
+
+    /**
+     * Rounds to the nearest number and halves towards zero.
+     *
+     * Rounds 2.5 and 1.6 to 2, 1.5 and 1.4 to 1.
+     */
+    const ROUND_HALF_DOWN = \NumberFormatter::ROUND_HALFDOWN;
+
     const FRACTIONAL = 'fractional';
     const INTEGER = 'integer';
 
-    protected static $types = array(
+    protected static $types = [
         self::FRACTIONAL,
         self::INTEGER,
-    );
+    ];
+
+    protected $roundingMode;
 
     private $type;
-
-    private $precision;
+    private $scale;
 
     /**
-     * Constructor.
-     *
      * @see self::$types for a list of supported types
      *
-     * @param integer $precision The precision
-     * @param string  $type      One of the supported types
+     * @param int    $scale The scale
+     * @param string $type  One of the supported types
+     *
+     * @throws UnexpectedTypeException if the given value of type is unknown
      */
-    public function __construct($precision = null, $type = null)
+    public function __construct(int $scale = null, string $type = null, ?int $roundingMode = self::ROUND_HALF_UP)
     {
-        if (null === $precision) {
-            $precision = 0;
+        if (null === $scale) {
+            $scale = 0;
         }
 
         if (null === $type) {
             $type = self::FRACTIONAL;
         }
 
-        if (!in_array($type, self::$types, true)) {
+        if (null === $roundingMode) {
+            $roundingMode = self::ROUND_HALF_UP;
+        }
+
+        if (!\in_array($type, self::$types, true)) {
             throw new UnexpectedTypeException($type, implode('", "', self::$types));
         }
 
         $this->type = $type;
-        $this->precision = $precision;
+        $this->scale = $scale;
+        $this->roundingMode = $roundingMode;
     }
 
     /**
      * Transforms between a normalized format (integer or float) into a percentage value.
      *
-     * @param  number $value  Normalized value
+     * @param int|float $value Normalized value
      *
-     * @return number         Percentage value
+     * @return string Percentage value
      *
-     * @throws UnexpectedTypeException if the given value is not numeric
-     * @throws TransformationFailedException if the value could not be transformed
+     * @throws TransformationFailedException if the given value is not numeric or
+     *                                       if the value could not be transformed
      */
     public function transform($value)
     {
@@ -78,7 +133,7 @@ class PercentToLocalizedStringTransformer implements DataTransformerInterface
         }
 
         if (!is_numeric($value)) {
-            throw new UnexpectedTypeException($value, 'numeric');
+            throw new TransformationFailedException('Expected a numeric.');
         }
 
         if (self::FRACTIONAL == $this->type) {
@@ -99,40 +154,79 @@ class PercentToLocalizedStringTransformer implements DataTransformerInterface
     /**
      * Transforms between a percentage value into a normalized format (integer or float).
      *
-     * @param  number $value  Percentage value.
+     * @param string $value Percentage value
      *
-     * @return number         Normalized value.
+     * @return int|float Normalized value
      *
-     * @throws UnexpectedTypeException if the given value is not a string
-     * @throws TransformationFailedException if the value could not be transformed
+     * @throws TransformationFailedException if the given value is not a string or
+     *                                       if the value could not be transformed
      */
     public function reverseTransform($value)
     {
-        if (!is_string($value)) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!\is_string($value)) {
+            throw new TransformationFailedException('Expected a string.');
         }
 
         if ('' === $value) {
             return null;
         }
 
+        $position = 0;
         $formatter = $this->getNumberFormatter();
+        $groupSep = $formatter->getSymbol(\NumberFormatter::GROUPING_SEPARATOR_SYMBOL);
+        $decSep = $formatter->getSymbol(\NumberFormatter::DECIMAL_SEPARATOR_SYMBOL);
+        $grouping = $formatter->getAttribute(\NumberFormatter::GROUPING_USED);
+
+        if ('.' !== $decSep && (!$grouping || '.' !== $groupSep)) {
+            $value = str_replace('.', $decSep, $value);
+        }
+
+        if (',' !== $decSep && (!$grouping || ',' !== $groupSep)) {
+            $value = str_replace(',', $decSep, $value);
+        }
+
+        if (false !== strpos($value, $decSep)) {
+            $type = \NumberFormatter::TYPE_DOUBLE;
+        } else {
+            $type = \PHP_INT_SIZE === 8 ? \NumberFormatter::TYPE_INT64 : \NumberFormatter::TYPE_INT32;
+        }
+
         // replace normal spaces so that the formatter can read them
-        $value = $formatter->parse(str_replace(' ', ' ', $value));
+        $result = $formatter->parse(str_replace(' ', "\xc2\xa0", $value), $type, $position);
 
         if (intl_is_failure($formatter->getErrorCode())) {
             throw new TransformationFailedException($formatter->getErrorMessage());
         }
 
         if (self::FRACTIONAL == $this->type) {
-            $value /= 100;
+            $result /= 100;
         }
 
-        return $value;
+        if (\function_exists('mb_detect_encoding') && false !== $encoding = mb_detect_encoding($value, null, true)) {
+            $length = mb_strlen($value, $encoding);
+            $remainder = mb_substr($value, $position, $length, $encoding);
+        } else {
+            $length = \strlen($value);
+            $remainder = substr($value, $position, $length);
+        }
+
+        // After parsing, position holds the index of the character where the
+        // parsing stopped
+        if ($position < $length) {
+            // Check if there are unrecognized characters at the end of the
+            // number (excluding whitespace characters)
+            $remainder = trim($remainder, " \t\n\r\0\x0b\xc2\xa0");
+
+            if ('' !== $remainder) {
+                throw new TransformationFailedException(sprintf('The number contains unrecognized characters: "%s".', $remainder));
+            }
+        }
+
+        return $this->round($result);
     }
 
     /**
-     * Returns a preconfigured \NumberFormatter instance
+     * Returns a preconfigured \NumberFormatter instance.
      *
      * @return \NumberFormatter
      */
@@ -140,8 +234,59 @@ class PercentToLocalizedStringTransformer implements DataTransformerInterface
     {
         $formatter = new \NumberFormatter(\Locale::getDefault(), \NumberFormatter::DECIMAL);
 
-        $formatter->setAttribute(\NumberFormatter::FRACTION_DIGITS, $this->precision);
+        $formatter->setAttribute(\NumberFormatter::FRACTION_DIGITS, $this->scale);
+        $formatter->setAttribute(\NumberFormatter::ROUNDING_MODE, $this->roundingMode);
 
         return $formatter;
+    }
+
+    /**
+     * Rounds a number according to the configured scale and rounding mode.
+     *
+     * @param int|float $number A number
+     *
+     * @return int|float The rounded number
+     */
+    private function round($number)
+    {
+        if (null !== $this->scale && null !== $this->roundingMode) {
+            // shift number to maintain the correct scale during rounding
+            $roundingCoef = pow(10, $this->scale);
+
+            if (self::FRACTIONAL == $this->type) {
+                $roundingCoef *= 100;
+            }
+
+            // string representation to avoid rounding errors, similar to bcmul()
+            $number = (string) ($number * $roundingCoef);
+
+            switch ($this->roundingMode) {
+                case self::ROUND_CEILING:
+                    $number = ceil($number);
+                    break;
+                case self::ROUND_FLOOR:
+                    $number = floor($number);
+                    break;
+                case self::ROUND_UP:
+                    $number = $number > 0 ? ceil($number) : floor($number);
+                    break;
+                case self::ROUND_DOWN:
+                    $number = $number > 0 ? floor($number) : ceil($number);
+                    break;
+                case self::ROUND_HALF_EVEN:
+                    $number = round($number, 0, PHP_ROUND_HALF_EVEN);
+                    break;
+                case self::ROUND_HALF_UP:
+                    $number = round($number, 0, PHP_ROUND_HALF_UP);
+                    break;
+                case self::ROUND_HALF_DOWN:
+                    $number = round($number, 0, PHP_ROUND_HALF_DOWN);
+                    break;
+            }
+
+            $number = 1 === $roundingCoef ? (int) $number : $number / $roundingCoef;
+        }
+
+        return $number;
     }
 }

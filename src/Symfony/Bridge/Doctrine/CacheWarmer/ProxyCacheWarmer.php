@@ -11,7 +11,7 @@
 
 namespace Symfony\Bridge\Doctrine\CacheWarmer;
 
-use Symfony\Bridge\Doctrine\RegistryInterface;
+use Doctrine\Persistence\ManagerRegistry;
 use Symfony\Component\HttpKernel\CacheWarmer\CacheWarmerInterface;
 
 /**
@@ -26,12 +26,7 @@ class ProxyCacheWarmer implements CacheWarmerInterface
 {
     private $registry;
 
-    /**
-     * Constructor.
-     *
-     * @param RegistryInterface $registry A RegistryInterface instance
-     */
-    public function __construct(RegistryInterface $registry)
+    public function __construct(ManagerRegistry $registry)
     {
         $this->registry = $registry;
     }
@@ -46,13 +41,19 @@ class ProxyCacheWarmer implements CacheWarmerInterface
         return false;
     }
 
-    public function warmUp($cacheDir)
+    /**
+     * {@inheritdoc}
+     *
+     * @return string[] A list of files to preload on PHP 7.4+
+     */
+    public function warmUp(string $cacheDir)
     {
-        foreach ($this->registry->getEntityManagers() as $em) {
+        $files = [];
+        foreach ($this->registry->getManagers() as $em) {
             // we need the directory no matter the proxy cache generation strategy
-            if (!file_exists($proxyCacheDir = $em->getConfiguration()->getProxyDir())) {
+            if (!is_dir($proxyCacheDir = $em->getConfiguration()->getProxyDir())) {
                 if (false === @mkdir($proxyCacheDir, 0777, true)) {
-                    throw new \RuntimeException(sprintf('Unable to create the Doctrine Proxy directory "%s".', dirname($proxyCacheDir)));
+                    throw new \RuntimeException(sprintf('Unable to create the Doctrine Proxy directory "%s".', $proxyCacheDir));
                 }
             } elseif (!is_writable($proxyCacheDir)) {
                 throw new \RuntimeException(sprintf('The Doctrine Proxy directory "%s" is not writeable for the current system user.', $proxyCacheDir));
@@ -66,6 +67,14 @@ class ProxyCacheWarmer implements CacheWarmerInterface
             $classes = $em->getMetadataFactory()->getAllMetadata();
 
             $em->getProxyFactory()->generateProxyClasses($classes);
+
+            foreach (scandir($proxyCacheDir) as $file) {
+                if (!is_dir($file = $proxyCacheDir.'/'.$file)) {
+                    $files[] = $file;
+                }
+            }
         }
+
+        return $files;
     }
 }

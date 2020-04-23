@@ -1,12 +1,12 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Component\Security\Core\Authentication\RememberMe;
@@ -20,9 +20,12 @@ use Symfony\Component\Security\Core\Exception\TokenNotFoundException;
  */
 class InMemoryTokenProvider implements TokenProviderInterface
 {
-    private $tokens = array();
+    private $tokens = [];
 
-    public function loadTokenBySeries($series)
+    /**
+     * {@inheritdoc}
+     */
+    public function loadTokenBySeries(string $series)
     {
         if (!isset($this->tokens[$series])) {
             throw new TokenNotFoundException('No token found.');
@@ -31,7 +34,10 @@ class InMemoryTokenProvider implements TokenProviderInterface
         return $this->tokens[$series];
     }
 
-    public function updateToken($series, $tokenValue, \DateTime $lastUsed)
+    /**
+     * {@inheritdoc}
+     */
+    public function updateToken(string $series, string $tokenValue, \DateTime $lastUsed)
     {
         if (!isset($this->tokens[$series])) {
             throw new TokenNotFoundException('No token found.');
@@ -47,11 +53,17 @@ class InMemoryTokenProvider implements TokenProviderInterface
         $this->tokens[$series] = $token;
     }
 
-    public function deleteTokenBySeries($series)
+    /**
+     * {@inheritdoc}
+     */
+    public function deleteTokenBySeries(string $series)
     {
         unset($this->tokens[$series]);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function createNewToken(PersistentTokenInterface $token)
     {
         $this->tokens[$token->getSeries()] = $token;

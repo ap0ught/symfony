@@ -11,43 +11,54 @@
 
 namespace Symfony\Component\Routing\Matcher;
 
+use Symfony\Component\Routing\Exception\ExceptionInterface;
 use Symfony\Component\Routing\Exception\ResourceNotFoundException;
 
 /**
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 abstract class RedirectableUrlMatcher extends UrlMatcher implements RedirectableUrlMatcherInterface
 {
-    private $trailingSlashTest = false;
-
     /**
-     * @see UrlMatcher::match()
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function match($pathinfo)
+    public function match(string $pathinfo)
     {
         try {
-            $parameters = parent::match($pathinfo);
+            return parent::match($pathinfo);
         } catch (ResourceNotFoundException $e) {
-            if ('/' === substr($pathinfo, -1)) {
+            if (!\in_array($this->context->getMethod(), ['HEAD', 'GET'], true)) {
                 throw $e;
             }
 
-            // try with a / at the end
-            $this->trailingSlashTest = true;
+            if ($this->allowSchemes) {
+                redirect_scheme:
+                $scheme = $this->context->getScheme();
+                $this->context->setScheme(current($this->allowSchemes));
+                try {
+                    $ret = parent::match($pathinfo);
 
-            return $this->match($pathinfo.'/');
+                    return $this->redirect($pathinfo, $ret['_route'] ?? null, $this->context->getScheme()) + $ret;
+                } catch (ExceptionInterface $e2) {
+                    throw $e;
+                } finally {
+                    $this->context->setScheme($scheme);
+                }
+            } elseif ('/' === $trimmedPathinfo = rtrim($pathinfo, '/') ?: '/') {
+                throw $e;
+            } else {
+                try {
+                    $pathinfo = $trimmedPathinfo === $pathinfo ? $pathinfo.'/' : $trimmedPathinfo;
+                    $ret = parent::match($pathinfo);
+
+                    return $this->redirect($pathinfo, $ret['_route'] ?? null) + $ret;
+                } catch (ExceptionInterface $e2) {
+                    if ($this->allowSchemes) {
+                        goto redirect_scheme;
+                    }
+                    throw $e;
+                }
+            }
         }
-
-        if ($this->trailingSlashTest) {
-            $this->trailingSlashTest = false;
-
-            return $this->redirect($pathinfo, null);
-        }
-
-        return $parameters;
     }
 }

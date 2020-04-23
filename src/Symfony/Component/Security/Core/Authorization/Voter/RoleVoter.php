@@ -22,12 +22,7 @@ class RoleVoter implements VoterInterface
 {
     private $prefix;
 
-    /**
-     * Constructor.
-     *
-     * @param string $prefix The role prefix
-     */
-    public function __construct($prefix = 'ROLE_')
+    public function __construct(string $prefix = 'ROLE_')
     {
         $this->prefix = $prefix;
     }
@@ -35,35 +30,23 @@ class RoleVoter implements VoterInterface
     /**
      * {@inheritdoc}
      */
-    public function supportsAttribute($attribute)
-    {
-        return 0 === strpos($attribute, $this->prefix);
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function supportsClass($class)
-    {
-        return true;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function vote(TokenInterface $token, $object, array $attributes)
+    public function vote(TokenInterface $token, $subject, array $attributes)
     {
         $result = VoterInterface::ACCESS_ABSTAIN;
         $roles = $this->extractRoles($token);
 
         foreach ($attributes as $attribute) {
-            if (!$this->supportsAttribute($attribute)) {
+            if (!\is_string($attribute) || 0 !== strpos($attribute, $this->prefix)) {
                 continue;
+            }
+
+            if ('ROLE_PREVIOUS_ADMIN' === $attribute) {
+                trigger_deprecation('symfony/security-core', '5.1', 'The ROLE_PREVIOUS_ADMIN role is deprecated and will be removed in version 6.0, use the IS_IMPERSONATOR attribute instead.');
             }
 
             $result = VoterInterface::ACCESS_DENIED;
             foreach ($roles as $role) {
-                if ($attribute === $role->getRole()) {
+                if ($attribute === $role) {
                     return VoterInterface::ACCESS_GRANTED;
                 }
             }
@@ -74,6 +57,6 @@ class RoleVoter implements VoterInterface
 
     protected function extractRoles(TokenInterface $token)
     {
-        return $token->getRoles();
+        return $token->getRoleNames();
     }
 }

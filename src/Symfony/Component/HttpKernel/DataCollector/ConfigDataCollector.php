@@ -11,27 +11,28 @@
 
 namespace Symfony\Component\HttpKernel\DataCollector;
 
-use Symfony\Component\HttpKernel\KernelInterface;
-use Symfony\Component\HttpKernel\Kernel;
-use Symfony\Component\HttpKernel\DataCollector\DataCollector;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\HttpKernel\KernelInterface;
+use Symfony\Component\VarDumper\Caster\ClassStub;
 
 /**
- * ConfigDataCollector.
- *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
-class ConfigDataCollector extends DataCollector
+class ConfigDataCollector extends DataCollector implements LateDataCollectorInterface
 {
+    /**
+     * @var KernelInterface
+     */
     private $kernel;
 
     /**
-     * Constructor.
-     *
-     * @param KernelInterface $kernel A KernelInterface instance
+     * Sets the Kernel associated with this Request.
      */
-    public function __construct(KernelInterface $kernel)
+    public function setKernel(KernelInterface $kernel = null)
     {
         $this->kernel = $kernel;
     }
@@ -39,31 +40,62 @@ class ConfigDataCollector extends DataCollector
     /**
      * {@inheritdoc}
      */
-    public function collect(Request $request, Response $response, \Exception $exception = null)
+    public function collect(Request $request, Response $response, \Throwable $exception = null)
     {
-        $this->data = array(
-            'token'           => $response->headers->get('X-Debug-Token'),
+        $this->data = [
+            'token' => $response->headers->get('X-Debug-Token'),
             'symfony_version' => Kernel::VERSION,
-            'name'            => $this->kernel->getName(),
-            'env'             => $this->kernel->getEnvironment(),
-            'debug'           => $this->kernel->isDebug(),
-            'php_version'     => PHP_VERSION,
-            'xdebug_enabled'  => extension_loaded('xdebug'),
-            'eaccel_enabled'  => extension_loaded('eaccelerator') && ini_get('eaccelerator.enable'),
-            'apc_enabled'     => extension_loaded('apc') && ini_get('apc.enabled'),
-            'xcache_enabled'  => extension_loaded('xcache') && ini_get('xcache.cacher'),
-            'bundles'         => array(),
-        );
+            'symfony_state' => 'unknown',
+            'env' => isset($this->kernel) ? $this->kernel->getEnvironment() : 'n/a',
+            'debug' => isset($this->kernel) ? $this->kernel->isDebug() : 'n/a',
+            'php_version' => PHP_VERSION,
+            'php_architecture' => PHP_INT_SIZE * 8,
+            'php_intl_locale' => class_exists('Locale', false) && \Locale::getDefault() ? \Locale::getDefault() : 'n/a',
+            'php_timezone' => date_default_timezone_get(),
+            'xdebug_enabled' => \extension_loaded('xdebug'),
+            'apcu_enabled' => \extension_loaded('apcu') && filter_var(ini_get('apc.enabled'), FILTER_VALIDATE_BOOLEAN),
+            'zend_opcache_enabled' => \extension_loaded('Zend OPcache') && filter_var(ini_get('opcache.enable'), FILTER_VALIDATE_BOOLEAN),
+            'bundles' => [],
+            'sapi_name' => \PHP_SAPI,
+        ];
 
-        foreach ($this->kernel->getBundles() as $name => $bundle) {
-            $this->data['bundles'][$name] = $bundle->getPath();
+        if (isset($this->kernel)) {
+            foreach ($this->kernel->getBundles() as $name => $bundle) {
+                $this->data['bundles'][$name] = new ClassStub(\get_class($bundle));
+            }
+
+            $this->data['symfony_state'] = $this->determineSymfonyState();
+            $this->data['symfony_minor_version'] = sprintf('%s.%s', Kernel::MAJOR_VERSION, Kernel::MINOR_VERSION);
+            $this->data['symfony_lts'] = 4 === Kernel::MINOR_VERSION;
+            $eom = \DateTime::createFromFormat('d/m/Y', '01/'.Kernel::END_OF_MAINTENANCE);
+            $eol = \DateTime::createFromFormat('d/m/Y', '01/'.Kernel::END_OF_LIFE);
+            $this->data['symfony_eom'] = $eom->format('F Y');
+            $this->data['symfony_eol'] = $eol->format('F Y');
         }
+
+        if (preg_match('~^(\d+(?:\.\d+)*)(.+)?$~', $this->data['php_version'], $matches) && isset($matches[2])) {
+            $this->data['php_version'] = $matches[1];
+            $this->data['php_version_extra'] = $matches[2];
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function reset()
+    {
+        $this->data = [];
+    }
+
+    public function lateCollect()
+    {
+        $this->data = $this->cloneVar($this->data);
     }
 
     /**
      * Gets the token.
      *
-     * @return string The token
+     * @return string|null The token
      */
     public function getToken()
     {
@@ -81,6 +113,57 @@ class ConfigDataCollector extends DataCollector
     }
 
     /**
+     * Returns the state of the current Symfony release.
+     *
+     * @return string One of: unknown, dev, stable, eom, eol
+     */
+    public function getSymfonyState()
+    {
+        return $this->data['symfony_state'];
+    }
+
+    /**
+     * Returns the minor Symfony version used (without patch numbers of extra
+     * suffix like "RC", "beta", etc.).
+     *
+     * @return string
+     */
+    public function getSymfonyMinorVersion()
+    {
+        return $this->data['symfony_minor_version'];
+    }
+
+    /**
+     * Returns if the current Symfony version is a Long-Term Support one.
+     */
+    public function isSymfonyLts(): bool
+    {
+        return $this->data['symfony_lts'];
+    }
+
+    /**
+     * Returns the human redable date when this Symfony version ends its
+     * maintenance period.
+     *
+     * @return string
+     */
+    public function getSymfonyEom()
+    {
+        return $this->data['symfony_eom'];
+    }
+
+    /**
+     * Returns the human redable date when this Symfony version reaches its
+     * "end of life" and won't receive bugs or security fixes.
+     *
+     * @return string
+     */
+    public function getSymfonyEol()
+    {
+        return $this->data['symfony_eol'];
+    }
+
+    /**
      * Gets the PHP version.
      *
      * @return string The PHP version
@@ -91,13 +174,37 @@ class ConfigDataCollector extends DataCollector
     }
 
     /**
-     * Gets the application name.
+     * Gets the PHP version extra part.
      *
-     * @return string The application name
+     * @return string|null The extra part
      */
-    public function getAppName()
+    public function getPhpVersionExtra()
     {
-        return $this->data['name'];
+        return isset($this->data['php_version_extra']) ? $this->data['php_version_extra'] : null;
+    }
+
+    /**
+     * @return int The PHP architecture as number of bits (e.g. 32 or 64)
+     */
+    public function getPhpArchitecture()
+    {
+        return $this->data['php_architecture'];
+    }
+
+    /**
+     * @return string
+     */
+    public function getPhpIntlLocale()
+    {
+        return $this->data['php_intl_locale'];
+    }
+
+    /**
+     * @return string
+     */
+    public function getPhpTimezone()
+    {
+        return $this->data['php_timezone'];
     }
 
     /**
@@ -113,7 +220,7 @@ class ConfigDataCollector extends DataCollector
     /**
      * Returns true if the debug is enabled.
      *
-     * @return Boolean true if debug is enabled, false otherwise
+     * @return bool true if debug is enabled, false otherwise
      */
     public function isDebug()
     {
@@ -123,7 +230,7 @@ class ConfigDataCollector extends DataCollector
     /**
      * Returns true if the XDebug is enabled.
      *
-     * @return Boolean true if XDebug is enabled, false otherwise
+     * @return bool true if XDebug is enabled, false otherwise
      */
     public function hasXDebug()
     {
@@ -131,43 +238,23 @@ class ConfigDataCollector extends DataCollector
     }
 
     /**
-     * Returns true if EAccelerator is enabled.
+     * Returns true if APCu is enabled.
      *
-     * @return Boolean true if EAccelerator is enabled, false otherwise
+     * @return bool true if APCu is enabled, false otherwise
      */
-    public function hasEAccelerator()
+    public function hasApcu()
     {
-        return $this->data['eaccel_enabled'];
+        return $this->data['apcu_enabled'];
     }
 
     /**
-     * Returns true if APC is enabled.
+     * Returns true if Zend OPcache is enabled.
      *
-     * @return Boolean true if APC is enabled, false otherwise
+     * @return bool true if Zend OPcache is enabled, false otherwise
      */
-    public function hasApc()
+    public function hasZendOpcache()
     {
-        return $this->data['apc_enabled'];
-    }
-
-    /**
-     * Returns true if XCache is enabled.
-     *
-     * @return Boolean true if XCache is enabled, false otherwise
-     */
-    public function hasXCache()
-    {
-        return $this->data['xcache_enabled'];
-    }
-
-    /**
-     * Returns true if any accelerator is enabled.
-     *
-     * @return Boolean true if any accelerator is enabled, false otherwise
-     */
-    public function hasAccelerator()
-    {
-        return $this->hasApc() || $this->hasEAccelerator() || $this->hasXCache();
+        return $this->data['zend_opcache_enabled'];
     }
 
     public function getBundles()
@@ -176,10 +263,44 @@ class ConfigDataCollector extends DataCollector
     }
 
     /**
+     * Gets the PHP SAPI name.
+     *
+     * @return string The environment
+     */
+    public function getSapiName()
+    {
+        return $this->data['sapi_name'];
+    }
+
+    /**
      * {@inheritdoc}
      */
     public function getName()
     {
         return 'config';
+    }
+
+    /**
+     * Tries to retrieve information about the current Symfony version.
+     *
+     * @return string One of: dev, stable, eom, eol
+     */
+    private function determineSymfonyState(): string
+    {
+        $now = new \DateTime();
+        $eom = \DateTime::createFromFormat('d/m/Y', '01/'.Kernel::END_OF_MAINTENANCE)->modify('last day of this month');
+        $eol = \DateTime::createFromFormat('d/m/Y', '01/'.Kernel::END_OF_LIFE)->modify('last day of this month');
+
+        if ($now > $eol) {
+            $versionState = 'eol';
+        } elseif ($now > $eom) {
+            $versionState = 'eom';
+        } elseif ('' !== Kernel::EXTRA_VERSION) {
+            $versionState = 'dev';
+        } else {
+            $versionState = 'stable';
+        }
+
+        return $versionState;
     }
 }

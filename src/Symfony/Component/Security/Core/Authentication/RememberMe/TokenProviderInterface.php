@@ -1,7 +1,5 @@
 <?php
 
-namespace Symfony\Component\Security\Core\Authentication\RememberMe;
-
 /*
  * This file is part of the Symfony package.
  *
@@ -11,41 +9,40 @@ namespace Symfony\Component\Security\Core\Authentication\RememberMe;
  * file that was distributed with this source code.
  */
 
+namespace Symfony\Component\Security\Core\Authentication\RememberMe;
+
+use Symfony\Component\Security\Core\Exception\TokenNotFoundException;
+
 /**
- * Interface for TokenProviders
+ * Interface for TokenProviders.
  *
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
  */
 interface TokenProviderInterface
 {
     /**
-     * Loads the active token for the given series
+     * Loads the active token for the given series.
+     *
+     * @return PersistentTokenInterface
      *
      * @throws TokenNotFoundException if the token is not found
+     */
+    public function loadTokenBySeries(string $series);
+
+    /**
+     * Deletes all tokens belonging to series.
+     */
+    public function deleteTokenBySeries(string $series);
+
+    /**
+     * Updates the token according to this data.
      *
-     * @param string $series
-     * @return PersistentTokenInterface
+     * @throws TokenNotFoundException if the token is not found
      */
-    function loadTokenBySeries($series);
+    public function updateToken(string $series, string $tokenValue, \DateTime $lastUsed);
 
     /**
-     * Deletes all tokens belonging to series
-     * @param string $series
+     * Creates a new token.
      */
-    function deleteTokenBySeries($series);
-
-    /**
-     * Updates the token according to this data
-     *
-     * @param string   $series
-     * @param string   $tokenValue
-     * @param DateTime $lastUsed
-     */
-    function updateToken($series, $tokenValue, \DateTime $lastUsed);
-
-    /**
-     * Creates a new token
-     * @param PersistentTokenInterface $token
-     */
-    function createNewToken(PersistentTokenInterface $token);
+    public function createNewToken(PersistentTokenInterface $token);
 }

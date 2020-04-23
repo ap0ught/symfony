@@ -1,29 +1,29 @@
 localized_login_path:
-    pattern: /{_locale}/login
-    defaults: { _controller: FormLoginBundle:Localized:login }
+    path:     /{_locale}/login
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::loginAction }
     requirements: { _locale: "^[a-z]{2}$" }
 
 localized_check_path:
-    pattern: /{_locale}/login_check
-    defaults: { _controller: FormLoginBundle:Localized:loginCheck }
+    path:     /{_locale}/login_check
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::loginCheckAction }
     requirements: { _locale: "^[a-z]{2}$" }
 
 localized_default_target_path:
-    pattern: /{_locale}/profile
-    defaults: { _controller: FormLoginBundle:Localized:profile }
+    path:     /{_locale}/profile
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::profileAction }
     requirements: { _locale: "^[a-z]{2}$" }
 
 localized_logout_path:
-    pattern: /{_locale}/logout
-    defaults: { _controller: FormLoginBundle:Localized:logout }
+    path:     /{_locale}/logout
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::logoutAction }
     requirements: { _locale: "^[a-z]{2}$" }
 
 localized_logout_target_path:
-    pattern: /{_locale}/
-    defaults: { _controller: FormLoginBundle:Localized:homepage }
+    path:     /{_locale}/
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::homepageAction }
     requirements: { _locale: "^[a-z]{2}$" }
 
 localized_secure_path:
-    pattern: /{_locale}/secure/
-    defaults: { _controller: FormLoginBundle:Localized:secure }
+    path:     /{_locale}/secure/
+    defaults: { _controller: Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller\LocalizedController::secureAction }
     requirements: { _locale: "^[a-z]{2}$" }

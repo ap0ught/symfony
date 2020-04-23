@@ -11,84 +11,65 @@
 
 namespace Symfony\Component\EventDispatcher;
 
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface as ContractsEventDispatcherInterface;
+
 /**
  * The EventDispatcherInterface is the central point of Symfony's event listener system.
  * Listeners are registered on the manager and events are dispatched through the
  * manager.
  *
  * @author Bernhard Schussek <bschussek@gmail.com>
- *
- * @api
  */
-interface EventDispatcherInterface
+interface EventDispatcherInterface extends ContractsEventDispatcherInterface
 {
-    /**
-     * Dispatches an event to all registered listeners.
-     *
-     * @param string $eventName The name of the event to dispatch. The name of
-     *                          the event is the name of the method that is
-     *                          invoked on listeners.
-     * @param Event $event The event to pass to the event handlers/listeners.
-     *                     If not supplied, an empty Event instance is created.
-     *
-     * @api
-     */
-    function dispatch($eventName, Event $event = null);
-
     /**
      * Adds an event listener that listens on the specified events.
      *
-     * @param string   $eventName The event to listen on
-     * @param callable $listener  The listener
-     * @param integer  $priority  The higher this value, the earlier an event
-     *                            listener will be triggered in the chain (defaults to 0)
-     *
-     * @api
+     * @param callable $listener The listener
+     * @param int      $priority The higher this value, the earlier an event
+     *                           listener will be triggered in the chain (defaults to 0)
      */
-    function addListener($eventName, $listener, $priority = 0);
+    public function addListener(string $eventName, $listener, int $priority = 0);
 
     /**
-     * Adds an event subscriber. The subscriber is asked for all the events he is
+     * Adds an event subscriber.
+     *
+     * The subscriber is asked for all the events it is
      * interested in and added as a listener for these events.
-     *
-     * @param EventSubscriberInterface $subscriber The subscriber.
-     *
-     * @api
      */
-    function addSubscriber(EventSubscriberInterface $subscriber);
+    public function addSubscriber(EventSubscriberInterface $subscriber);
 
     /**
      * Removes an event listener from the specified events.
      *
-     * @param string|array $eventName The event(s) to remove a listener from.
-     * @param object $listener The listener object to remove.
+     * @param callable $listener The listener to remove
      */
-    function removeListener($eventName, $listener);
+    public function removeListener(string $eventName, $listener);
+
+    public function removeSubscriber(EventSubscriberInterface $subscriber);
 
     /**
-     * Removes an event subscriber.
+     * Gets the listeners of a specific event or all listeners sorted by descending priority.
      *
-     * @param EventSubscriberInterface $subscriber The subscriber.
+     * @return array The event listeners for the specified event, or all event listeners by event name
      */
-    function removeSubscriber(EventSubscriberInterface $subscriber);
+    public function getListeners(string $eventName = null);
 
     /**
-     * Gets the listeners of a specific event or all listeners.
+     * Gets the listener priority for a specific event.
      *
-     * @param string $eventName The name of the event.
+     * Returns null if the event or the listener does not exist.
      *
-     * @return array The event listeners for the specified event, or all event
-     *               listeners by event name.
+     * @param callable $listener The listener
+     *
+     * @return int|null The event listener priority
      */
-    function getListeners($eventName = null);
+    public function getListenerPriority(string $eventName, $listener);
 
     /**
      * Checks whether an event has any registered listeners.
      *
-     * @param string $eventName The name of the event.
-     *
-     * @return Boolean TRUE if the specified event has any listeners, FALSE
-     *                 otherwise.
+     * @return bool true if the specified event has any listeners, false otherwise
      */
-    function hasListeners($eventName = null);
+    public function hasListeners(string $eventName = null);
 }

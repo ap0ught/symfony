@@ -15,55 +15,53 @@ namespace Symfony\Component\DomCrawler\Field;
  * FileFormField represents a file form field (an HTML file input tag).
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
 class FileFormField extends FormField
 {
     /**
      * Sets the PHP error code associated with the field.
      *
-     * @param integer $error The error code (one of UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE, UPLOAD_ERR_PARTIAL, UPLOAD_ERR_NO_FILE, UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, or UPLOAD_ERR_EXTENSION)
+     * @param int $error The error code (one of UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE, UPLOAD_ERR_PARTIAL, UPLOAD_ERR_NO_FILE, UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, or UPLOAD_ERR_EXTENSION)
      *
      * @throws \InvalidArgumentException When error code doesn't exist
      */
-    public function setErrorCode($error)
+    public function setErrorCode(int $error)
     {
-        $codes = array(UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE, UPLOAD_ERR_PARTIAL, UPLOAD_ERR_NO_FILE, UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, UPLOAD_ERR_EXTENSION);
-        if (!in_array($error, $codes)) {
-            throw new \InvalidArgumentException(sprintf('The error code %s is not valid.', $error));
+        $codes = [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE, UPLOAD_ERR_PARTIAL, UPLOAD_ERR_NO_FILE, UPLOAD_ERR_NO_TMP_DIR, UPLOAD_ERR_CANT_WRITE, UPLOAD_ERR_EXTENSION];
+        if (!\in_array($error, $codes)) {
+            throw new \InvalidArgumentException(sprintf('The error code "%s" is not valid.', $error));
         }
 
-        $this->value = array('name' => '', 'type' => '', 'tmp_name' => '', 'error' => $error, 'size' => 0);
+        $this->value = ['name' => '', 'type' => '', 'tmp_name' => '', 'error' => $error, 'size' => 0];
     }
 
     /**
      * Sets the value of the field.
-     *
-     * @param string $value The value of the field
-     *
-     * @api
      */
-    public function upload($value)
+    public function upload(?string $value)
     {
         $this->setValue($value);
     }
 
     /**
      * Sets the value of the field.
-     *
-     * @param string $value The value of the field
      */
-    public function setValue($value)
+    public function setValue(?string $value)
     {
         if (null !== $value && is_readable($value)) {
             $error = UPLOAD_ERR_OK;
             $size = filesize($value);
-            $name = basename($value);
+            $info = pathinfo($value);
+            $name = $info['basename'];
 
             // copy to a tmp location
-            $tmp = tempnam(sys_get_temp_dir(), 'upload');
-            unlink($tmp);
+            $tmp = sys_get_temp_dir().'/'.strtr(substr(base64_encode(hash('sha256', uniqid(mt_rand(), true), true)), 0, 7), '/', '_');
+            if (\array_key_exists('extension', $info)) {
+                $tmp .= '.'.$info['extension'];
+            }
+            if (is_file($tmp)) {
+                unlink($tmp);
+            }
             copy($value, $tmp);
             $value = $tmp;
         } else {
@@ -73,7 +71,15 @@ class FileFormField extends FormField
             $value = '';
         }
 
-        $this->value = array('name' => $name, 'type' => '', 'tmp_name' => $value, 'error' => $error, 'size' => $size);
+        $this->value = ['name' => $name, 'type' => '', 'tmp_name' => $value, 'error' => $error, 'size' => $size];
+    }
+
+    /**
+     * Sets path to the file as string for simulating HTTP request.
+     */
+    public function setFilePath(string $path)
+    {
+        parent::setValue($path);
     }
 
     /**
@@ -83,12 +89,12 @@ class FileFormField extends FormField
      */
     protected function initialize()
     {
-        if ('input' != $this->node->nodeName) {
+        if ('input' !== $this->node->nodeName) {
             throw new \LogicException(sprintf('A FileFormField can only be created from an input tag (%s given).', $this->node->nodeName));
         }
 
-        if ('file' != $this->node->getAttribute('type')) {
-            throw new \LogicException(sprintf('A FileFormField can only be created from an input tag with a type of file (given type is %s).', $this->node->getAttribute('type')));
+        if ('file' !== strtolower($this->node->getAttribute('type'))) {
+            throw new \LogicException(sprintf('A FileFormField can only be created from an input tag with a type of file (given type is "%s").', $this->node->getAttribute('type')));
         }
 
         $this->setValue(null);

@@ -1,22 +1,22 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Bundle\SecurityBundle\Security;
 
-use Symfony\Component\Security\Http\FirewallMapInterface;
+use Psr\Container\ContainerInterface;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\Security\Http\FirewallMapInterface;
 
 /**
- * This is a lazy-loading firewall map implementation
+ * This is a lazy-loading firewall map implementation.
  *
  * Listeners will only be initialized if we really need them.
  *
@@ -24,10 +24,10 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  */
 class FirewallMap implements FirewallMapInterface
 {
-    protected $container;
-    protected $map;
+    private $container;
+    private $map;
 
-    public function __construct(ContainerInterface $container, array $map)
+    public function __construct(ContainerInterface $container, iterable $map)
     {
         $this->container = $container;
         $this->map = $map;
@@ -35,12 +35,50 @@ class FirewallMap implements FirewallMapInterface
 
     public function getListeners(Request $request)
     {
+        $context = $this->getFirewallContext($request);
+
+        if (null === $context) {
+            return [[], null, null];
+        }
+
+        return [$context->getListeners(), $context->getExceptionListener(), $context->getLogoutListener()];
+    }
+
+    /**
+     * @return FirewallConfig|null
+     */
+    public function getFirewallConfig(Request $request)
+    {
+        $context = $this->getFirewallContext($request);
+
+        if (null === $context) {
+            return null;
+        }
+
+        return $context->getConfig();
+    }
+
+    private function getFirewallContext(Request $request): ?FirewallContext
+    {
+        if ($request->attributes->has('_firewall_context')) {
+            $storedContextId = $request->attributes->get('_firewall_context');
+            foreach ($this->map as $contextId => $requestMatcher) {
+                if ($contextId === $storedContextId) {
+                    return $this->container->get($contextId);
+                }
+            }
+
+            $request->attributes->remove('_firewall_context');
+        }
+
         foreach ($this->map as $contextId => $requestMatcher) {
             if (null === $requestMatcher || $requestMatcher->matches($request)) {
-                return $this->container->get($contextId)->getContext();
+                $request->attributes->set('_firewall_context', $contextId);
+
+                return $this->container->get($contextId);
             }
         }
 
-        return array(array(), null);
+        return null;
     }
 }

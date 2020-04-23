@@ -12,24 +12,35 @@
 namespace Symfony\Bridge\Doctrine\Validator\Constraints;
 
 use Symfony\Component\Validator\Constraint;
-use Symfony\Component\Validator\ConstraintValidator;
-use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 
 /**
- * Constraint for the Unique Entity validator
+ * Constraint for the Unique Entity validator.
  *
  * @Annotation
+ * @Target({"CLASS", "ANNOTATION"})
+ *
  * @author Benjamin Eberlei <kontakt@beberlei.de>
  */
 class UniqueEntity extends Constraint
 {
+    const NOT_UNIQUE_ERROR = '23bd9dbf-6b9b-41cd-a99e-4844bcf3077f';
+
     public $message = 'This value is already used.';
+    public $service = 'doctrine.orm.validator.unique';
     public $em = null;
-    public $fields = array();
+    public $entityClass = null;
+    public $repositoryMethod = 'findBy';
+    public $fields = [];
+    public $errorPath = null;
+    public $ignoreNull = true;
+
+    protected static $errorNames = [
+        self::NOT_UNIQUE_ERROR => 'NOT_UNIQUE_ERROR',
+    ];
 
     public function getRequiredOptions()
     {
-        return array('fields');
+        return ['fields'];
     }
 
     /**
@@ -39,11 +50,11 @@ class UniqueEntity extends Constraint
      */
     public function validatedBy()
     {
-        return 'doctrine.orm.validator.unique';
+        return $this->service;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function getTargets()
     {

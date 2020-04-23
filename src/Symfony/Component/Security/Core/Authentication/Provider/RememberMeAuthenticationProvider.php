@@ -1,54 +1,72 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Component\Security\Core\Authentication\Provider;
 
+use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Core\Exception\BadCredentialsException;
+use Symfony\Component\Security\Core\Exception\LogicException;
 use Symfony\Component\Security\Core\User\UserCheckerInterface;
 use Symfony\Component\Security\Core\User\UserInterface;
-use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
-use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
-use Symfony\Component\Security\Core\Exception\BadCredentialsException;
 
 class RememberMeAuthenticationProvider implements AuthenticationProviderInterface
 {
     private $userChecker;
-    private $key;
+    private $secret;
     private $providerKey;
 
-    public function __construct(UserCheckerInterface $userChecker, $key, $providerKey)
+    /**
+     * @param string $secret      A secret
+     * @param string $providerKey A provider secret
+     */
+    public function __construct(UserCheckerInterface $userChecker, string $secret, string $providerKey)
     {
         $this->userChecker = $userChecker;
-        $this->key = $key;
+        $this->secret = $secret;
         $this->providerKey = $providerKey;
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function authenticate(TokenInterface $token)
     {
         if (!$this->supports($token)) {
-            return;
+            throw new AuthenticationException('The token is not supported by this authentication provider.');
         }
 
-        if ($this->key !== $token->getKey()) {
-            throw new BadCredentialsException('The presented key does not match.');
+        if ($this->secret !== $token->getSecret()) {
+            throw new BadCredentialsException('The presented secret does not match.');
         }
 
         $user = $token->getUser();
+
+        if (!$token->getUser() instanceof UserInterface) {
+            throw new LogicException(sprintf('Method "%s::getUser()" must return a "%s" instance, "%s" returned.', get_debug_type($token), UserInterface::class, get_debug_type($user)));
+        }
+
+        $this->userChecker->checkPreAuth($user);
         $this->userChecker->checkPostAuth($user);
 
-        $authenticatedToken = new RememberMeToken($user, $this->providerKey, $this->key);
+        $authenticatedToken = new RememberMeToken($user, $this->providerKey, $this->secret);
         $authenticatedToken->setAttributes($token->getAttributes());
 
         return $authenticatedToken;
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function supports(TokenInterface $token)
     {
         return $token instanceof RememberMeToken && $token->getProviderKey() === $this->providerKey;

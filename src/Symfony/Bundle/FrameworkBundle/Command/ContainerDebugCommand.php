@@ -11,209 +11,261 @@
 
 namespace Symfony\Bundle\FrameworkBundle\Command;
 
+use Symfony\Bundle\FrameworkBundle\Console\Helper\DescriptorHelper;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Exception\InvalidArgumentException;
 use Symfony\Component\Console\Input\InputArgument;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Output\Output;
-use Symfony\Component\DependencyInjection\Alias;
-use Symfony\Component\DependencyInjection\Definition;
-use Symfony\Component\DependencyInjection\Loader\XmlFileLoader;
+use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\Config\FileLocator;
+use Symfony\Component\DependencyInjection\Exception\ServiceNotFoundException;
+use Symfony\Component\DependencyInjection\ParameterBag\ParameterBag;
 
 /**
- * A console command for retrieving information about services
+ * A console command for retrieving information about services.
  *
  * @author Ryan Weaver <ryan@thatsquality.com>
+ *
+ * @internal
  */
-class ContainerDebugCommand extends ContainerAwareCommand
+class ContainerDebugCommand extends Command
 {
-    /**
-     * @var ContainerBuilder
-     */
-    private $containerBuilder;
+    use BuildDebugContainerTrait;
+
+    protected static $defaultName = 'debug:container';
 
     /**
-     * @see Command
+     * {@inheritdoc}
      */
     protected function configure()
     {
         $this
-            ->setDefinition(array(
-                new InputArgument('name', InputArgument::OPTIONAL, 'A service name (foo)  or search (foo*)'),
-                new InputOption('show-private', null, InputOption::VALUE_NONE, 'Use to show public *and* private services'),
-            ))
-            ->setName('container:debug')
+            ->setDefinition([
+                new InputArgument('name', InputArgument::OPTIONAL, 'A service name (foo)'),
+                new InputOption('show-arguments', null, InputOption::VALUE_NONE, 'Used to show arguments in services'),
+                new InputOption('show-hidden', null, InputOption::VALUE_NONE, 'Used to show hidden (internal) services'),
+                new InputOption('tag', null, InputOption::VALUE_REQUIRED, 'Shows all services with a specific tag'),
+                new InputOption('tags', null, InputOption::VALUE_NONE, 'Displays tagged services for an application'),
+                new InputOption('parameter', null, InputOption::VALUE_REQUIRED, 'Displays a specific parameter for an application'),
+                new InputOption('parameters', null, InputOption::VALUE_NONE, 'Displays parameters for an application'),
+                new InputOption('types', null, InputOption::VALUE_NONE, 'Displays types (classes/interfaces) available in the container'),
+                new InputOption('env-var', null, InputOption::VALUE_REQUIRED, 'Displays a specific environment variable used in the container'),
+                new InputOption('env-vars', null, InputOption::VALUE_NONE, 'Displays environment variables used in the container'),
+                new InputOption('format', null, InputOption::VALUE_REQUIRED, 'The output format (txt, xml, json, or md)', 'txt'),
+                new InputOption('raw', null, InputOption::VALUE_NONE, 'To output raw description'),
+                new InputOption('deprecations', null, InputOption::VALUE_NONE, 'Displays deprecations generated when compiling and warming up the container'),
+            ])
             ->setDescription('Displays current services for an application')
-            ->setHelp(<<<EOF
-The <info>container:debug</info> command displays all configured <comment>public</comment> services:
+            ->setHelp(<<<'EOF'
+The <info>%command.name%</info> command displays all configured <comment>public</comment> services:
 
-  <info>container:debug</info>
+  <info>php %command.full_name%</info>
+
+To see deprecations generated during container compilation and cache warmup, use the <info>--deprecations</info> option:
+
+  <info>php %command.full_name% --deprecations</info>
 
 To get specific information about a service, specify its name:
 
-  <info>container:debug validator</info>
+  <info>php %command.full_name% validator</info>
 
-By default, private services are hidden. You can display all services by
-using the --show-private flag:
+To get specific information about a service including all its arguments, use the <info>--show-arguments</info> flag:
 
-  <info>container:debug --show-private</info>
+  <info>php %command.full_name% validator --show-arguments</info>
+
+To see available types that can be used for autowiring, use the <info>--types</info> flag:
+
+  <info>php %command.full_name% --types</info>
+
+To see environment variables used by the container, use the <info>--env-vars</info> flag:
+
+  <info>php %command.full_name% --env-vars</info>
+
+Display a specific environment variable by specifying its name with the <info>--env-var</info> option:
+
+  <info>php %command.full_name% --env-var=APP_ENV</info>
+
+Use the --tags option to display tagged <comment>public</comment> services grouped by tag:
+
+  <info>php %command.full_name% --tags</info>
+
+Find all services with a specific tag by specifying the tag name with the <info>--tag</info> option:
+
+  <info>php %command.full_name% --tag=form.type</info>
+
+Use the <info>--parameters</info> option to display all parameters:
+
+  <info>php %command.full_name% --parameters</info>
+
+Display a specific parameter by specifying its name with the <info>--parameter</info> option:
+
+  <info>php %command.full_name% --parameter=kernel.debug</info>
+
+By default, internal services are hidden. You can display them
+using the <info>--show-hidden</info> flag:
+
+  <info>php %command.full_name% --show-hidden</info>
+
 EOF
             )
         ;
     }
 
     /**
-     * @see Command
+     * {@inheritdoc}
      */
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $io = new SymfonyStyle($input, $output);
+        $errorIo = $io->getErrorStyle();
+
+        $this->validateInput($input);
+        $object = $this->getContainerBuilder();
+
+        if ($input->getOption('env-vars')) {
+            $options = ['env-vars' => true];
+        } elseif ($envVar = $input->getOption('env-var')) {
+            $options = ['env-vars' => true, 'name' => $envVar];
+        } elseif ($input->getOption('types')) {
+            $options = [];
+            $options['filter'] = [$this, 'filterToServiceTypes'];
+        } elseif ($input->getOption('parameters')) {
+            $parameters = [];
+            foreach ($object->getParameterBag()->all() as $k => $v) {
+                $parameters[$k] = $object->resolveEnvPlaceholders($v);
+            }
+            $object = new ParameterBag($parameters);
+            $options = [];
+        } elseif ($parameter = $input->getOption('parameter')) {
+            $options = ['parameter' => $parameter];
+        } elseif ($input->getOption('tags')) {
+            $options = ['group_by' => 'tags'];
+        } elseif ($tag = $input->getOption('tag')) {
+            $options = ['tag' => $tag];
+        } elseif ($name = $input->getArgument('name')) {
+            $name = $this->findProperServiceName($input, $errorIo, $object, $name, $input->getOption('show-hidden'));
+            $options = ['id' => $name];
+        } elseif ($input->getOption('deprecations')) {
+            $options = ['deprecations' => true];
+        } else {
+            $options = [];
+        }
+
+        $helper = new DescriptorHelper();
+        $options['format'] = $input->getOption('format');
+        $options['show_arguments'] = $input->getOption('show-arguments');
+        $options['show_hidden'] = $input->getOption('show-hidden');
+        $options['raw_text'] = $input->getOption('raw');
+        $options['output'] = $io;
+        $options['is_debug'] = $this->getApplication()->getKernel()->isDebug();
+
+        try {
+            $helper->describe($io, $object, $options);
+
+            if (isset($options['id']) && isset($this->getApplication()->getKernel()->getContainer()->getRemovedIds()[$options['id']])) {
+                $errorIo->note(sprintf('The "%s" service or alias has been removed or inlined when the container was compiled.', $options['id']));
+            }
+        } catch (ServiceNotFoundException $e) {
+            if ('' !== $e->getId() && '@' === $e->getId()[0]) {
+                throw new ServiceNotFoundException($e->getId(), $e->getSourceId(), null, [substr($e->getId(), 1)]);
+            }
+
+            throw $e;
+        }
+
+        if (!$input->getArgument('name') && !$input->getOption('tag') && !$input->getOption('parameter') && !$input->getOption('env-vars') && !$input->getOption('env-var') && $input->isInteractive()) {
+            if ($input->getOption('tags')) {
+                $errorIo->comment('To search for a specific tag, re-run this command with a search term. (e.g. <comment>debug:container --tag=form.type</comment>)');
+            } elseif ($input->getOption('parameters')) {
+                $errorIo->comment('To search for a specific parameter, re-run this command with a search term. (e.g. <comment>debug:container --parameter=kernel.debug</comment>)');
+            } elseif (!$input->getOption('deprecations')) {
+                $errorIo->comment('To search for a specific service, re-run this command with a search term. (e.g. <comment>debug:container log</comment>)');
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * Validates input arguments and options.
+     *
+     * @throws \InvalidArgumentException
+     */
+    protected function validateInput(InputInterface $input)
+    {
+        $options = ['tags', 'tag', 'parameters', 'parameter'];
+
+        $optionsCount = 0;
+        foreach ($options as $option) {
+            if ($input->getOption($option)) {
+                ++$optionsCount;
+            }
+        }
+
         $name = $input->getArgument('name');
-
-        $this->containerBuilder = $this->getContainerBuilder();
-        $serviceIds = $this->containerBuilder->getServiceIds();
-
-        // sort so that it reads like an index of services
-        asort($serviceIds);
-
-        if ($name) {
-            $this->outputService($output, $name);
-        } else {
-            $this->outputServices($output, $serviceIds, $input->getOption('show-private'));
+        if ((null !== $name) && ($optionsCount > 0)) {
+            throw new InvalidArgumentException('The options tags, tag, parameters & parameter can not be combined with the service name argument.');
+        } elseif ((null === $name) && $optionsCount > 1) {
+            throw new InvalidArgumentException('The options tags, tag, parameters & parameter can not be combined together.');
         }
     }
 
-    protected function outputServices(OutputInterface $output, $serviceIds, $showPrivate = false)
+    private function findProperServiceName(InputInterface $input, SymfonyStyle $io, ContainerBuilder $builder, string $name, bool $showHidden): string
     {
-        // set the label to specify public or public+private
-        if ($showPrivate) {
-            $label = '<comment>Public</comment> and <comment>private</comment> services';
-        } else {
-            $label = '<comment>Public</comment> services';
+        $name = ltrim($name, '\\');
+
+        if ($builder->has($name) || !$input->isInteractive()) {
+            return $name;
         }
 
-        $output->writeln($this->getHelper('formatter')->formatSection('container', $label));
-
-        // loop through to get space needed and filter private services
-        $maxName = 4;
-        $maxScope = 6;
-        foreach ($serviceIds as $key => $serviceId) {
-            $definition = $this->resolveServiceDefinition($serviceId);
-
-            if ($definition instanceof Definition) {
-                // filter out private services unless shown explicitly
-                if (!$showPrivate && !$definition->isPublic()) {
-                    unset($serviceIds[$key]);
-                    continue;
-                }
-
-                if (strlen($definition->getScope()) > $maxScope) {
-                    $maxScope = strlen($definition->getScope());
-                }
-            }
-
-            if (strlen($serviceId) > $maxName) {
-                $maxName = strlen($serviceId);
-            }
+        $matchingServices = $this->findServiceIdsContaining($builder, $name, $showHidden);
+        if (empty($matchingServices)) {
+            throw new InvalidArgumentException(sprintf('No services found that match "%s".', $name));
         }
-        $format  = '%-'.$maxName.'s %-'.$maxScope.'s %s';
 
-        // the title field needs extra space to make up for comment tags
-        $format1  = '%-'.($maxName + 19).'s %-'.($maxScope + 19).'s %s';
-        $output->writeln(sprintf($format1, '<comment>Name</comment>', '<comment>Scope</comment>', '<comment>Class Name</comment>'));
+        if (1 === \count($matchingServices)) {
+            return $matchingServices[0];
+        }
 
+        return $io->choice('Select one of the following services to display its information', $matchingServices);
+    }
+
+    private function findServiceIdsContaining(ContainerBuilder $builder, string $name, bool $showHidden): array
+    {
+        $serviceIds = $builder->getServiceIds();
+        $foundServiceIds = $foundServiceIdsIgnoringBackslashes = [];
         foreach ($serviceIds as $serviceId) {
-            $definition = $this->resolveServiceDefinition($serviceId);
-
-            if ($definition instanceof Definition) {
-                $output->writeln(sprintf($format, $serviceId, $definition->getScope(), $definition->getClass()));
-            } elseif ($definition instanceof Alias) {
-                $alias = $definition;
-                $output->writeln(sprintf($format, $serviceId, 'n/a', sprintf('<comment>alias for</comment> <info>%s</info>', (string) $alias)));
-            } else {
-                // we have no information (happens with "service_container")
-                $service = $definition;
-                $output->writeln(sprintf($format, $serviceId, '', get_class($service)));
+            if (!$showHidden && 0 === strpos($serviceId, '.')) {
+                continue;
+            }
+            if (false !== stripos(str_replace('\\', '', $serviceId), $name)) {
+                $foundServiceIdsIgnoringBackslashes[] = $serviceId;
+            }
+            if (false !== stripos($serviceId, $name)) {
+                $foundServiceIds[] = $serviceId;
             }
         }
+
+        return $foundServiceIds ?: $foundServiceIdsIgnoringBackslashes;
     }
 
     /**
-     * Renders detailed service information about one service
+     * @internal
      */
-    protected function outputService(OutputInterface $output, $serviceId)
+    public function filterToServiceTypes(string $serviceId): bool
     {
-        $definition = $this->resolveServiceDefinition($serviceId);
-
-        $label = sprintf('Information for service <info>%s</info>', $serviceId);
-        $output->writeln($this->getHelper('formatter')->formatSection('container', $label));
-        $output->writeln('');
-
-        if ($definition instanceof Definition) {
-            $output->writeln(sprintf('<comment>Service Id</comment>   %s', $serviceId));
-            $output->writeln(sprintf('<comment>Class</comment>        %s', $definition->getClass()));
-
-            $tags = $definition->getTags() ? implode(', ', array_keys($definition->getTags())) : '-';
-            $output->writeln(sprintf('<comment>Tags</comment>         %s', $tags));
-
-            $output->writeln(sprintf('<comment>Scope</comment>        %s', $definition->getScope()));
-
-            $public = $definition->isPublic() ? 'yes' : 'no';
-            $output->writeln(sprintf('<comment>Public</comment>       %s', $public));
-        } elseif ($definition instanceof Alias) {
-            $alias = $definition;
-            $output->writeln(sprintf('This service is an alias for the service <info>%s</info>', (string) $alias));
-        } else {
-            // edge case (but true for "service_container", all we have is the service itself
-            $service = $definition;
-            $output->writeln(sprintf('<comment>Service Id</comment>   %s', $serviceId));
-            $output->writeln(sprintf('<comment>Class</comment>        %s', get_class($service)));
-        }
-    }
-
-    /**
-     * Loads the ContainerBuilder from the cache.
-     *
-     * @return ContainerBuilder
-     */
-    private function getContainerBuilder()
-    {
-        if (!$this->getApplication()->getKernel()->isDebug()) {
-            throw new \LogicException(sprintf('Debug information about the container is only available in debug mode.'));
+        // filter out things that could not be valid class names
+        if (!preg_match('/(?(DEFINE)(?<V>[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*+))^(?&V)(?:\\\\(?&V))*+(?: \$(?&V))?$/', $serviceId)) {
+            return false;
         }
 
-        if (!file_exists($cachedFile = $this->getContainer()->getParameter('debug.container.dump'))) {
-            throw new \LogicException(sprintf('Debug information about the container could not be found. Please clear the cache and try again.'));
+        // if the id has a \, assume it is a class
+        if (false !== strpos($serviceId, '\\')) {
+            return true;
         }
 
-        $container = new ContainerBuilder();
-
-        $loader = new XmlFileLoader($container, new FileLocator());
-        $loader->load($cachedFile);
-
-        return $container;
-    }
-
-    /**
-     * Given an array of service IDs, this returns the array of corresponding
-     * Definition and Alias objects that those ids represent.
-     *
-     * @param string $serviceId The service id to resolve
-     * @return \Symfony\Component\DependencyInjection\Definition|\Symfony\Component\DependencyInjection\Alias
-     */
-    private function resolveServiceDefinition($serviceId)
-    {
-        if ($this->containerBuilder->hasDefinition($serviceId)) {
-            return $this->containerBuilder->getDefinition($serviceId);
-        }
-
-        // Some service IDs don't have a Definition, they're simply an Alias
-        if ($this->containerBuilder->hasAlias($serviceId)) {
-            return $this->containerBuilder->getAlias($serviceId);
-        }
-
-        // the service has been injected in some special way, just return the service
-        return $this->containerBuilder->get($serviceId);
+        return class_exists($serviceId) || interface_exists($serviceId, false);
     }
 }

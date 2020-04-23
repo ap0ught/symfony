@@ -11,31 +11,85 @@
 
 namespace Symfony\Bundle\WebProfilerBundle\Tests\DependencyInjection;
 
+use PHPUnit\Framework\TestCase;
 use Symfony\Bundle\WebProfilerBundle\DependencyInjection\Configuration;
 use Symfony\Component\Config\Definition\Processor;
 
-class ConfigurationTest extends \PHPUnit_Framework_TestCase
+class ConfigurationTest extends TestCase
 {
     /**
      * @dataProvider getDebugModes
      */
-    public function testConfigTree($options, $results)
+    public function testConfigTree(array $options, array $expectedResult)
     {
         $processor = new Processor();
-        $configuration = new Configuration(array());
-        $config = $processor->processConfiguration($configuration, array($options));
+        $configuration = new Configuration();
+        $config = $processor->processConfiguration($configuration, [$options]);
 
-        $this->assertEquals($results, $config);
+        $this->assertEquals($expectedResult, $config);
     }
 
     public function getDebugModes()
     {
-        return array(
-            array(array(), array('intercept_redirects' => false, 'toolbar' => false, 'verbose' => true)),
-            array(array('intercept_redirects' => true), array('intercept_redirects' => true, 'toolbar' => false, 'verbose' => true)),
-            array(array('intercept_redirects' => false), array('intercept_redirects' => false, 'toolbar' => false, 'verbose' => true)),
-            array(array('toolbar' => true), array('intercept_redirects' => false, 'toolbar' => true, 'verbose' => true)),
-            array(array('verbose' => false), array('intercept_redirects' => false, 'toolbar' => false, 'verbose' => false)),
-        );
+        return [
+            [
+                'options' => [],
+                'expectedResult' => [
+                    'intercept_redirects' => false,
+                    'toolbar' => false,
+                    'excluded_ajax_paths' => '^/((index|app(_[\w]+)?)\.php/)?_wdt',
+                ],
+            ],
+            [
+                'options' => ['toolbar' => true],
+                'expectedResult' => [
+                    'intercept_redirects' => false,
+                    'toolbar' => true,
+                    'excluded_ajax_paths' => '^/((index|app(_[\w]+)?)\.php/)?_wdt',
+                ],
+            ],
+            [
+                'options' => ['excluded_ajax_paths' => 'test'],
+                'expectedResult' => [
+                    'intercept_redirects' => false,
+                    'toolbar' => false,
+                    'excluded_ajax_paths' => 'test',
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @dataProvider getInterceptRedirectsConfiguration
+     */
+    public function testConfigTreeUsingInterceptRedirects(bool $interceptRedirects, array $expectedResult)
+    {
+        $processor = new Processor();
+        $configuration = new Configuration();
+        $config = $processor->processConfiguration($configuration, [['intercept_redirects' => $interceptRedirects]]);
+
+        $this->assertEquals($expectedResult, $config);
+    }
+
+    public function getInterceptRedirectsConfiguration()
+    {
+        return [
+            [
+                'interceptRedirects' => true,
+                'expectedResult' => [
+                    'intercept_redirects' => true,
+                    'toolbar' => false,
+                    'excluded_ajax_paths' => '^/((index|app(_[\w]+)?)\.php/)?_wdt',
+                ],
+            ],
+            [
+                'interceptRedirects' => false,
+                'expectedResult' => [
+                    'intercept_redirects' => false,
+                    'toolbar' => false,
+                    'excluded_ajax_paths' => '^/((index|app(_[\w]+)?)\.php/)?_wdt',
+                ],
+            ],
+        ];
     }
 }

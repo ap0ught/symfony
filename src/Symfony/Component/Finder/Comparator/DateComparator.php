@@ -14,25 +14,25 @@ namespace Symfony\Component\Finder\Comparator;
 /**
  * DateCompare compiles date comparisons.
  *
- * @author Fabien Potencier <fabien@symfony.com> PHP port
+ * @author Fabien Potencier <fabien@symfony.com>
  */
 class DateComparator extends Comparator
 {
-
     /**
-     * Constructor.
-     *
      * @param string $test A comparison string
      *
      * @throws \InvalidArgumentException If the test is not understood
      */
-    public function __construct($test)
+    public function __construct(string $test)
     {
-        if (!preg_match('#^\s*([<>=]=?|after|since|before|until)?\s*(.+?)\s*$#i', $test, $matches)) {
+        if (!preg_match('#^\s*(==|!=|[<>]=?|after|since|before|until)?\s*(.+?)\s*$#i', $test, $matches)) {
             throw new \InvalidArgumentException(sprintf('Don\'t understand "%s" as a date test.', $test));
         }
 
-        if (false === $target = @strtotime($matches[2])) {
+        try {
+            $date = new \DateTime($matches[2]);
+            $target = $date->format('U');
+        } catch (\Exception $e) {
             throw new \InvalidArgumentException(sprintf('"%s" is not a valid date.', $matches[2]));
         }
 

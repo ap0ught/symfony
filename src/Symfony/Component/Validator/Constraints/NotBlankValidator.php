@@ -13,30 +13,36 @@ namespace Symfony\Component\Validator\Constraints;
 
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
+use Symfony\Component\Validator\Exception\UnexpectedTypeException;
 
 /**
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
+ * @author Kévin Dunglas <dunglas@gmail.com>
  */
 class NotBlankValidator extends ConstraintValidator
 {
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($value, Constraint $constraint)
+    public function validate($value, Constraint $constraint)
     {
-        if (null === $value || '' === $value) {
-            $this->setMessage($constraint->message);
-
-            return false;
+        if (!$constraint instanceof NotBlank) {
+            throw new UnexpectedTypeException($constraint, NotBlank::class);
         }
 
-        return true;
+        if ($constraint->allowNull && null === $value) {
+            return;
+        }
+
+        if (\is_string($value) && null !== $constraint->normalizer) {
+            $value = ($constraint->normalizer)($value);
+        }
+
+        if (false === $value || (empty($value) && '0' != $value)) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($value))
+                ->setCode(NotBlank::IS_BLANK_ERROR)
+                ->addViolation();
+        }
     }
 }

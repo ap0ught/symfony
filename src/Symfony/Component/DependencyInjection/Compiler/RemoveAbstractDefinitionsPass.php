@@ -1,12 +1,12 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Component\DependencyInjection\Compiler;
@@ -14,25 +14,19 @@ namespace Symfony\Component\DependencyInjection\Compiler;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 /**
- * Removes abstract Definitions
- *
+ * Removes abstract Definitions.
  */
 class RemoveAbstractDefinitionsPass implements CompilerPassInterface
 {
     /**
-     * Removes abstract definitions from the ContainerBuilder
-     *
-     * @param ContainerBuilder $container
+     * Removes abstract definitions from the ContainerBuilder.
      */
     public function process(ContainerBuilder $container)
     {
-        $compiler = $container->getCompiler();
-        $formatter = $compiler->getLoggingFormatter();
-
         foreach ($container->getDefinitions() as $id => $definition) {
             if ($definition->isAbstract()) {
                 $container->removeDefinition($id);
-                $compiler->addLogMessage($formatter->formatRemoveService($this, $id, 'abstract'));
+                $container->log($this, sprintf('Removed service "%s"; reason: abstract.', $id));
             }
         }
     }

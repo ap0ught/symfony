@@ -1,17 +1,20 @@
 <?php
 
-namespace Symfony\Component\Serializer\Normalizer;
-
-use Symfony\Component\Serializer\SerializerInterface;
-
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
+
+namespace Symfony\Component\Serializer\Normalizer;
+
+use Symfony\Component\Serializer\Exception\CircularReferenceException;
+use Symfony\Component\Serializer\Exception\ExceptionInterface;
+use Symfony\Component\Serializer\Exception\InvalidArgumentException;
+use Symfony\Component\Serializer\Exception\LogicException;
 
 /**
  * Defines the interface of normalizers.
@@ -21,40 +24,29 @@ use Symfony\Component\Serializer\SerializerInterface;
 interface NormalizerInterface
 {
     /**
-     * Normalizes an object into a set of arrays/scalars
+     * Normalizes an object into a set of arrays/scalars.
      *
-     * @param object $object object to normalize
-     * @param string $format format the normalization result will be encoded as
-     * @return array|scalar
+     * @param mixed  $object  Object to normalize
+     * @param string $format  Format the normalization result will be encoded as
+     * @param array  $context Context options for the normalizer
+     *
+     * @return array|string|int|float|bool|\ArrayObject|null \ArrayObject is used to make sure an empty object is encoded as an object not an array
+     *
+     * @throws InvalidArgumentException   Occurs when the object given is not a supported type for the normalizer
+     * @throws CircularReferenceException Occurs when the normalizer detects a circular reference when no circular
+     *                                    reference handler can fix it
+     * @throws LogicException             Occurs when the normalizer is not called in an expected context
+     * @throws ExceptionInterface         Occurs for all the other cases of errors
      */
-    function normalize($object, $format = null);
+    public function normalize($object, string $format = null, array $context = []);
 
     /**
-     * Denormalizes data back into an object of the given class
+     * Checks whether the given class is supported for normalization by this normalizer.
      *
-     * @param mixed $data data to restore
-     * @param string $class the expected class to instantiate
-     * @param string $format format the given data was extracted from
-     * @return object
-     */
-    function denormalize($data, $class, $format = null);
-
-    /**
-     * Checks whether the given class is supported for normalization by this normalizer
+     * @param mixed  $data   Data to normalize
+     * @param string $format The format being (de-)serialized from or into
      *
-     * @param mixed   $data   Data to normalize.
-     * @param string  $format The format being (de-)serialized from or into.
-     * @return Boolean
+     * @return bool
      */
-    function supportsNormalization($data, $format = null);
-
-    /**
-     * Checks whether the given class is supported for denormalization by this normalizer
-     *
-     * @param mixed   $data   Data to denormalize from.
-     * @param string  $type   The class to which the data should be denormalized.
-     * @param string  $format The format being deserialized from.
-     * @return Boolean
-     */
-    function supportsDenormalization($data, $type, $format = null);
+    public function supportsNormalization($data, string $format = null);
 }

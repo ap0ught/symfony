@@ -11,49 +11,50 @@
 
 namespace Symfony\Component\CssSelector\Node;
 
-use Symfony\Component\CssSelector\XPathExpr;
-
 /**
- * HashNode represents a "selector#id" node.
+ * Represents a "<selector>#<id>" node.
  *
- * This component is a port of the Python lxml library,
- * which is copyright Infrae and distributed under the BSD license.
+ * This component is a port of the Python cssselect library,
+ * which is copyright Ian Bicking, @see https://github.com/SimonSapin/cssselect.
  *
- * @author Fabien Potencier <fabien@symfony.com>
+ * @author Jean-François Simon <jeanfrancois.simon@sensiolabs.com>
+ *
+ * @internal
  */
-class HashNode implements NodeInterface
+class HashNode extends AbstractNode
 {
-    protected $selector;
-    protected $id;
+    private $selector;
+    private $id;
 
-    /**
-     * Constructor.
-     *
-     * @param NodeInterface $selector The NodeInterface object
-     * @param string $id The ID
-     */
-    public function __construct($selector, $id)
+    public function __construct(NodeInterface $selector, string $id)
     {
         $this->selector = $selector;
         $this->id = $id;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    public function __toString()
+    public function getSelector(): NodeInterface
     {
-        return sprintf('%s[%s#%s]', __CLASS__, $this->selector, $this->id);
+        return $this->selector;
+    }
+
+    public function getId(): string
+    {
+        return $this->id;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function toXpath()
+    public function getSpecificity(): Specificity
     {
-        $path = $this->selector->toXpath();
-        $path->addCondition(sprintf('@id = %s', XPathExpr::xpathLiteral($this->id)));
+        return $this->selector->getSpecificity()->plus(new Specificity(1, 0, 0));
+    }
 
-        return $path;
+    /**
+     * {@inheritdoc}
+     */
+    public function __toString(): string
+    {
+        return sprintf('%s[%s#%s]', $this->getNodeName(), $this->selector, $this->id);
     }
 }

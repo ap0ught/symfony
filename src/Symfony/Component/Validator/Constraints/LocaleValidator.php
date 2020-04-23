@@ -11,47 +11,47 @@
 
 namespace Symfony\Component\Validator\Constraints;
 
+use Symfony\Component\Intl\Locales;
 use Symfony\Component\Validator\Constraint;
 use Symfony\Component\Validator\ConstraintValidator;
 use Symfony\Component\Validator\Exception\UnexpectedTypeException;
+use Symfony\Component\Validator\Exception\UnexpectedValueException;
 
 /**
- * Validates whether a value is a valid locale code
+ * Validates whether a value is a valid locale code.
  *
- * @author Bernhard Schussek <bernhard.schussek@symfony.com>
- *
- * @api
+ * @author Bernhard Schussek <bschussek@gmail.com>
  */
 class LocaleValidator extends ConstraintValidator
 {
     /**
-     * Checks if the passed value is valid.
-     *
-     * @param mixed      $value      The value that should be validated
-     * @param Constraint $constraint The constraint for the validation
-     *
-     * @return Boolean Whether or not the value is valid
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function isValid($value, Constraint $constraint)
+    public function validate($value, Constraint $constraint)
     {
+        if (!$constraint instanceof Locale) {
+            throw new UnexpectedTypeException($constraint, Locale::class);
+        }
+
         if (null === $value || '' === $value) {
-            return true;
+            return;
         }
 
-        if (!is_scalar($value) && !(is_object($value) && method_exists($value, '__toString'))) {
-            throw new UnexpectedTypeException($value, 'string');
+        if (!is_scalar($value) && !(\is_object($value) && method_exists($value, '__toString'))) {
+            throw new UnexpectedValueException($value, 'string');
         }
 
-        $value = (string) $value;
-
-        if (!in_array($value, \Symfony\Component\Locale\Locale::getLocales())) {
-            $this->setMessage($constraint->message, array('{{ value }}' => $value));
-
-            return false;
+        $inputValue = (string) $value;
+        $value = $inputValue;
+        if ($constraint->canonicalize) {
+            $value = \Locale::canonicalize($value);
         }
 
-        return true;
+        if (!Locales::exists($value)) {
+            $this->context->buildViolation($constraint->message)
+                ->setParameter('{{ value }}', $this->formatValue($inputValue))
+                ->setCode(Locale::NO_SUCH_LOCALE_ERROR)
+                ->addViolation();
+        }
     }
 }

@@ -11,39 +11,43 @@
 
 namespace Symfony\Component\HttpKernel\DataCollector;
 
+use Symfony\Component\ErrorHandler\Exception\FlattenException;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpKernel\Exception\FlattenException;
-use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * ExceptionDataCollector.
  *
  * @author Fabien Potencier <fabien@symfony.com>
+ *
+ * @final
  */
 class ExceptionDataCollector extends DataCollector
 {
     /**
      * {@inheritdoc}
      */
-    public function collect(Request $request, Response $response, \Exception $exception = null)
+    public function collect(Request $request, Response $response, \Throwable $exception = null)
     {
         if (null !== $exception) {
-            $flattenException = FlattenException::create($exception);
-            if ($exception instanceof HttpExceptionInterface) {
-                $flattenException->setStatusCode($exception->getStatusCode());
-            }
-
-            $this->data = array(
-                'exception' => $flattenException,
-            );
+            $this->data = [
+                'exception' => FlattenException::createFromThrowable($exception),
+            ];
         }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function reset()
+    {
+        $this->data = [];
     }
 
     /**
      * Checks if the exception is not null.
      *
-     * @return Boolean true if the exception is not null, false otherwise
+     * @return bool true if the exception is not null, false otherwise
      */
     public function hasException()
     {
@@ -53,7 +57,7 @@ class ExceptionDataCollector extends DataCollector
     /**
      * Gets the exception.
      *
-     * @return \Exception The exception
+     * @return \Exception|FlattenException
      */
     public function getException()
     {
@@ -73,7 +77,7 @@ class ExceptionDataCollector extends DataCollector
     /**
      * Gets the exception code.
      *
-     * @return integer The exception code
+     * @return int The exception code
      */
     public function getCode()
     {
@@ -83,7 +87,7 @@ class ExceptionDataCollector extends DataCollector
     /**
      * Gets the status code.
      *
-     * @return integer The status code
+     * @return int The status code
      */
     public function getStatusCode()
     {

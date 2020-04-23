@@ -11,68 +11,90 @@
 
 namespace Symfony\Bridge\Doctrine\Form\Type;
 
-use Symfony\Component\Form\FormBuilder;
-use Symfony\Component\Form\FormFactoryInterface;
-use Symfony\Bridge\Doctrine\RegistryInterface;
-use Symfony\Bridge\Doctrine\Form\ChoiceList\EntityChoiceList;
-use Symfony\Bridge\Doctrine\Form\EventListener\MergeCollectionListener;
-use Symfony\Bridge\Doctrine\Form\DataTransformer\EntitiesToArrayTransformer;
-use Symfony\Bridge\Doctrine\Form\DataTransformer\EntityToIdTransformer;
-use Symfony\Component\Form\AbstractType;
+use Doctrine\ORM\Query\Parameter;
+use Doctrine\ORM\QueryBuilder;
+use Doctrine\Persistence\ObjectManager;
+use Symfony\Bridge\Doctrine\Form\ChoiceList\ORMQueryBuilderLoader;
+use Symfony\Component\Form\Exception\UnexpectedTypeException;
+use Symfony\Component\OptionsResolver\Options;
+use Symfony\Component\OptionsResolver\OptionsResolver;
 
-class EntityType extends AbstractType
+class EntityType extends DoctrineType
 {
-    protected $registry;
-
-    public function __construct(RegistryInterface $registry)
+    public function configureOptions(OptionsResolver $resolver)
     {
-        $this->registry = $registry;
+        parent::configureOptions($resolver);
+
+        // Invoke the query builder closure so that we can cache choice lists
+        // for equal query builders
+        $queryBuilderNormalizer = function (Options $options, $queryBuilder) {
+            if (\is_callable($queryBuilder)) {
+                $queryBuilder = $queryBuilder($options['em']->getRepository($options['class']));
+
+                if (null !== $queryBuilder && !$queryBuilder instanceof QueryBuilder) {
+                    throw new UnexpectedTypeException($queryBuilder, 'Doctrine\ORM\QueryBuilder');
+                }
+            }
+
+            return $queryBuilder;
+        };
+
+        $resolver->setNormalizer('query_builder', $queryBuilderNormalizer);
+        $resolver->setAllowedTypes('query_builder', ['null', 'callable', 'Doctrine\ORM\QueryBuilder']);
     }
 
-    public function buildForm(FormBuilder $builder, array $options)
+    /**
+     * Return the default loader object.
+     *
+     * @param QueryBuilder $queryBuilder
+     *
+     * @return ORMQueryBuilderLoader
+     */
+    public function getLoader(ObjectManager $manager, $queryBuilder, string $class)
     {
-        if ($options['multiple']) {
-            $builder
-                ->addEventSubscriber(new MergeCollectionListener())
-                ->prependClientTransformer(new EntitiesToArrayTransformer($options['choice_list']))
-            ;
-        } else {
-            $builder->prependClientTransformer(new EntityToIdTransformer($options['choice_list']));
-        }
-    }
-
-    public function getDefaultOptions(array $options)
-    {
-        $defaultOptions = array(
-            'em'                => null,
-            'class'             => null,
-            'property'          => null,
-            'query_builder'     => null,
-            'choices'           => array(),
-        );
-
-        $options = array_replace($defaultOptions, $options);
-
-        if (!isset($options['choice_list'])) {
-            $defaultOptions['choice_list'] = new EntityChoiceList(
-                $this->registry->getEntityManager($options['em']),
-                $options['class'],
-                $options['property'],
-                $options['query_builder'],
-                $options['choices']
-            );
+        if (!$queryBuilder instanceof QueryBuilder) {
+            throw new \TypeError(sprintf('Expected an instance of "%s", but got "%s".', QueryBuilder::class, get_debug_type($queryBuilder)));
         }
 
-        return $defaultOptions;
+        return new ORMQueryBuilderLoader($queryBuilder);
     }
 
-    public function getParent(array $options)
-    {
-        return 'choice';
-    }
-
-    public function getName()
+    /**
+     * {@inheritdoc}
+     */
+    public function getBlockPrefix()
     {
         return 'entity';
     }
+
+    /**
+     * We consider two query builders with an equal SQL string and
+     * equal parameters to be equal.
+     *
+     * @param QueryBuilder $queryBuilder
+     *
+     * @internal This method is public to be usable as callback. It should not
+     *           be used in user code.
+     */
+    public function getQueryBuilderPartsForCachingHash($queryBuilder): ?array
+    {
+        if (!$queryBuilder instanceof QueryBuilder) {
+            throw new \TypeError(sprintf('Expected an instance of "%s", but got "%s".', QueryBuilder::class, get_debug_type($queryBuilder)));
+        }
+
+        return [
+            $queryBuilder->getQuery()->getSQL(),
+            array_map([$this, 'parameterToArray'], $queryBuilder->getParameters()->toArray()),
+        ];
+    }
+
+    /**
+     * Converts a query parameter to an array.
+     */
+    private function parameterToArray(Parameter $parameter): array
+    {
+        return [$parameter->getName(), $parameter->getType(), $parameter->getValue()];
+    }
 }
+
+interface_exists(ObjectManager::class);

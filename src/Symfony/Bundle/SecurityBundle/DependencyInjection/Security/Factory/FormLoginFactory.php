@@ -12,7 +12,8 @@
 namespace Symfony\Bundle\SecurityBundle\DependencyInjection\Security\Factory;
 
 use Symfony\Component\Config\Definition\Builder\NodeDefinition;
-use Symfony\Component\DependencyInjection\DefinitionDecorator;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 
@@ -22,14 +23,15 @@ use Symfony\Component\DependencyInjection\Reference;
  * @author Fabien Potencier <fabien@symfony.com>
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
  */
-class FormLoginFactory extends AbstractFactory
+class FormLoginFactory extends AbstractFactory implements AuthenticatorFactoryInterface, EntryPointFactoryInterface
 {
     public function __construct()
     {
         $this->addOption('username_parameter', '_username');
         $this->addOption('password_parameter', '_password');
         $this->addOption('csrf_parameter', '_csrf_token');
-        $this->addOption('intention', 'authenticate');
+        $this->addOption('csrf_token_id', 'authenticate');
+        $this->addOption('enable_csrf', false);
         $this->addOption('post_only', true);
     }
 
@@ -49,7 +51,7 @@ class FormLoginFactory extends AbstractFactory
 
         $node
             ->children()
-                ->scalarNode('csrf_provider')->cannotBeEmpty()->end()
+                ->scalarNode('csrf_token_generator')->cannotBeEmpty()->end()
             ->end()
         ;
     }
@@ -59,42 +61,63 @@ class FormLoginFactory extends AbstractFactory
         return 'security.authentication.listener.form';
     }
 
-    protected function createAuthProvider(ContainerBuilder $container, $id, $config, $userProviderId)
+    protected function createAuthProvider(ContainerBuilder $container, string $id, array $config, string $userProviderId)
     {
+        if ($config['enable_csrf'] ?? false) {
+            throw new InvalidConfigurationException('The "enable_csrf" option of "form_login" is only available when "security.enable_authenticator_manager" is set to "true", use "csrf_token_generator" instead.');
+        }
+
         $provider = 'security.authentication.provider.dao.'.$id;
         $container
-            ->setDefinition($provider, new DefinitionDecorator('security.authentication.provider.dao'))
+            ->setDefinition($provider, new ChildDefinition('security.authentication.provider.dao'))
             ->replaceArgument(0, new Reference($userProviderId))
+            ->replaceArgument(1, new Reference('security.user_checker.'.$id))
             ->replaceArgument(2, $id)
         ;
 
         return $provider;
     }
 
-    protected function createListener($container, $id, $config, $userProvider)
+    protected function createListener(ContainerBuilder $container, string $id, array $config, string $userProvider)
     {
         $listenerId = parent::createListener($container, $id, $config, $userProvider);
 
-        if (isset($config['csrf_provider'])) {
-            $container
-                ->getDefinition($listenerId)
-                ->addArgument(new Reference($config['csrf_provider']))
-            ;
-        }
+        $container
+            ->getDefinition($listenerId)
+            ->addArgument(isset($config['csrf_token_generator']) ? new Reference($config['csrf_token_generator']) : null)
+        ;
 
         return $listenerId;
     }
 
-    protected function createEntryPoint($container, $id, $config, $defaultEntryPoint)
+    public function createEntryPoint(ContainerBuilder $container, string $id, array $config, ?string $defaultEntryPoint): string
     {
         $entryPointId = 'security.authentication.form_entry_point.'.$id;
         $container
-            ->setDefinition($entryPointId, new DefinitionDecorator('security.authentication.form_entry_point'))
+            ->setDefinition($entryPointId, new ChildDefinition('security.authentication.form_entry_point'))
             ->addArgument(new Reference('security.http_utils'))
             ->addArgument($config['login_path'])
             ->addArgument($config['use_forward'])
         ;
 
         return $entryPointId;
+    }
+
+    public function createAuthenticator(ContainerBuilder $container, string $firewallName, array $config, string $userProviderId): string
+    {
+        if (isset($config['csrf_token_generator'])) {
+            throw new InvalidConfigurationException('The "csrf_token_generator" option of "form_login" is only available when "security.enable_authenticator_manager" is set to "false", use "enable_csrf" instead.');
+        }
+
+        $authenticatorId = 'security.authenticator.form_login.'.$firewallName;
+        $options = array_intersect_key($config, $this->options);
+        $container
+            ->setDefinition($authenticatorId, new ChildDefinition('security.authenticator.form_login'))
+            ->replaceArgument(1, new Reference($userProviderId))
+            ->replaceArgument(2, new Reference($this->createAuthenticationSuccessHandler($container, $firewallName, $config)))
+            ->replaceArgument(3, new Reference($this->createAuthenticationFailureHandler($container, $firewallName, $config)))
+            ->replaceArgument(4, $options);
+
+        return $authenticatorId;
     }
 }

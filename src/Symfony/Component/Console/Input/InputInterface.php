@@ -11,6 +11,9 @@
 
 namespace Symfony\Component\Console\Input;
 
+use Symfony\Component\Console\Exception\InvalidArgumentException;
+use Symfony\Component\Console\Exception\RuntimeException;
+
 /**
  * InputInterface is the interface implemented by all input classes.
  *
@@ -21,83 +24,130 @@ interface InputInterface
     /**
      * Returns the first argument from the raw parameters (not parsed).
      *
-     * @return string The value of the first argument or null otherwise
+     * @return string|null The value of the first argument or null otherwise
      */
-    function getFirstArgument();
+    public function getFirstArgument();
 
     /**
-     * Returns true if the raw parameters (not parsed) contains a value.
+     * Returns true if the raw parameters (not parsed) contain a value.
      *
      * This method is to be used to introspect the input parameters
-     * before it has been validated. It must be used carefully.
+     * before they have been validated. It must be used carefully.
+     * Does not necessarily return the correct result for short options
+     * when multiple flags are combined in the same option.
      *
-     * @param string|array $values The values to look for in the raw parameters (can be an array)
+     * @param string|array $values     The values to look for in the raw parameters (can be an array)
+     * @param bool         $onlyParams Only check real parameters, skip those following an end of options (--) signal
      *
-     * @return Boolean true if the value is contained in the raw parameters
+     * @return bool true if the value is contained in the raw parameters
      */
-    function hasParameterOption($values);
+    public function hasParameterOption($values, bool $onlyParams = false);
 
     /**
      * Returns the value of a raw option (not parsed).
      *
      * This method is to be used to introspect the input parameters
-     * before it has been validated. It must be used carefully.
+     * before they have been validated. It must be used carefully.
+     * Does not necessarily return the correct result for short options
+     * when multiple flags are combined in the same option.
      *
-     * @param string|array $values The value(s) to look for in the raw parameters (can be an array)
-     * @param mixed $default The default value to return if no result is found
+     * @param string|array $values     The value(s) to look for in the raw parameters (can be an array)
+     * @param mixed        $default    The default value to return if no result is found
+     * @param bool         $onlyParams Only check real parameters, skip those following an end of options (--) signal
      *
      * @return mixed The option value
      */
-    function getParameterOption($values, $default = false);
+    public function getParameterOption($values, $default = false, bool $onlyParams = false);
 
     /**
      * Binds the current Input instance with the given arguments and options.
      *
-     * @param InputDefinition $definition A InputDefinition instance
+     * @throws RuntimeException
      */
-    function bind(InputDefinition $definition);
+    public function bind(InputDefinition $definition);
 
     /**
-     * Validate if arguments given are correct.
+     * Validates the input.
      *
-     * Throws an exception when not enough arguments are given.
-     *
-     * @throws \RuntimeException
+     * @throws RuntimeException When not enough arguments are given
      */
-    function validate();
+    public function validate();
 
     /**
      * Returns all the given arguments merged with the default values.
      *
      * @return array
      */
-    function getArguments();
+    public function getArguments();
 
     /**
-     * Get argument by name.
+     * Returns the argument value for a given argument name.
      *
-     * @param string $name The name of the argument
-     * @return mixed
+     * @return string|string[]|null The argument value
+     *
+     * @throws InvalidArgumentException When argument given doesn't exist
      */
-    function getArgument($name);
+    public function getArgument(string $name);
 
     /**
+     * Sets an argument value by name.
+     *
+     * @param string|string[]|null $value The argument value
+     *
+     * @throws InvalidArgumentException When argument given doesn't exist
+     */
+    public function setArgument(string $name, $value);
+
+    /**
+     * Returns true if an InputArgument object exists by name or position.
+     *
+     * @param string|int $name The InputArgument name or position
+     *
+     * @return bool true if the InputArgument object exists, false otherwise
+     */
+    public function hasArgument($name);
+
+    /**
+     * Returns all the given options merged with the default values.
+     *
      * @return array
      */
-    function getOptions();
+    public function getOptions();
 
     /**
-     * Get an option by name.
+     * Returns the option value for a given option name.
      *
-     * @param string $name The name of the option
-     * @return mixed
+     * @return string|string[]|bool|null The option value
+     *
+     * @throws InvalidArgumentException When option given doesn't exist
      */
-    function getOption($name);
+    public function getOption(string $name);
+
+    /**
+     * Sets an option value by name.
+     *
+     * @param string|string[]|bool|null $value The option value
+     *
+     * @throws InvalidArgumentException When option given doesn't exist
+     */
+    public function setOption(string $name, $value);
+
+    /**
+     * Returns true if an InputOption object exists by name.
+     *
+     * @return bool true if the InputOption object exists, false otherwise
+     */
+    public function hasOption(string $name);
 
     /**
      * Is this input means interactive?
      *
-     * @return Boolean
+     * @return bool
      */
-    function isInteractive();
+    public function isInteractive();
+
+    /**
+     * Sets the input interactivity.
+     */
+    public function setInteractive(bool $interactive);
 }

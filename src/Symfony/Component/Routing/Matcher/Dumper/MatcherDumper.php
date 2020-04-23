@@ -12,7 +12,6 @@
 namespace Symfony\Component\Routing\Matcher\Dumper;
 
 use Symfony\Component\Routing\RouteCollection;
-use Symfony\Component\Routing\Route;
 
 /**
  * MatcherDumper is the abstract class for all built-in matcher dumpers.
@@ -23,20 +22,13 @@ abstract class MatcherDumper implements MatcherDumperInterface
 {
     private $routes;
 
-    /**
-     * Constructor.
-     *
-     * @param RouteCollection $routes The RouteCollection to dump
-     */
     public function __construct(RouteCollection $routes)
     {
         $this->routes = $routes;
     }
 
     /**
-     * Gets the routes to dump.
-     *
-     * @return RouteCollection A RouteCollection instance
+     * {@inheritdoc}
      */
     public function getRoutes()
     {

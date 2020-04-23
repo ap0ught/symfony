@@ -1,12 +1,12 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Component\Security\Core\User;
@@ -22,51 +22,83 @@ use Symfony\Component\Security\Core\Exception\UsernameNotFoundException;
  *
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
  */
-class ChainUserProvider implements UserProviderInterface
+class ChainUserProvider implements UserProviderInterface, PasswordUpgraderInterface
 {
     private $providers;
 
-    public function __construct(array $providers)
+    /**
+     * @param iterable|UserProviderInterface[] $providers
+     */
+    public function __construct(iterable $providers)
     {
         $this->providers = $providers;
     }
 
     /**
-     * {@inheritDoc}
+     * @return array
      */
-    public function loadUserByUsername($username)
+    public function getProviders()
+    {
+        if ($this->providers instanceof \Traversable) {
+            return iterator_to_array($this->providers);
+        }
+
+        return $this->providers;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function loadUserByUsername(string $username)
     {
         foreach ($this->providers as $provider) {
             try {
                 return $provider->loadUserByUsername($username);
-            } catch (UsernameNotFoundException $notFound) {
+            } catch (UsernameNotFoundException $e) {
                 // try next one
             }
         }
 
-        throw new UsernameNotFoundException(sprintf('There is no user with name "%s".', $username));
+        $ex = new UsernameNotFoundException(sprintf('There is no user with name "%s".', $username));
+        $ex->setUsername($username);
+        throw $ex;
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     public function refreshUser(UserInterface $user)
     {
+        $supportedUserFound = false;
+
         foreach ($this->providers as $provider) {
             try {
+                if (!$provider->supportsClass(\get_class($user))) {
+                    continue;
+                }
+
                 return $provider->refreshUser($user);
-            } catch (UnsupportedUserException $unsupported) {
+            } catch (UnsupportedUserException $e) {
+                // try next one
+            } catch (UsernameNotFoundException $e) {
+                $supportedUserFound = true;
                 // try next one
             }
         }
 
-        throw new UnsupportedUserException(sprintf('The account "%s" is not supported.', get_class($user)));
+        if ($supportedUserFound) {
+            $e = new UsernameNotFoundException(sprintf('There is no user with name "%s".', $user->getUsername()));
+            $e->setUsername($user->getUsername());
+            throw $e;
+        } else {
+            throw new UnsupportedUserException(sprintf('There is no user provider for user "%s". Shouldn\'t the "supportsClass()" method of your user provider return true for this classname?', get_debug_type($user)));
+        }
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function supportsClass($class)
+    public function supportsClass(string $class)
     {
         foreach ($this->providers as $provider) {
             if ($provider->supportsClass($class)) {
@@ -75,5 +107,21 @@ class ChainUserProvider implements UserProviderInterface
         }
 
         return false;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function upgradePassword(UserInterface $user, string $newEncodedPassword): void
+    {
+        foreach ($this->providers as $provider) {
+            if ($provider instanceof PasswordUpgraderInterface) {
+                try {
+                    $provider->upgradePassword($user, $newEncodedPassword);
+                } catch (UnsupportedUserException $e) {
+                    // ignore: password upgrades are opportunistic
+                }
+            }
+        }
     }
 }

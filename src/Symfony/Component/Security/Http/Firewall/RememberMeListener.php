@@ -1,100 +1,126 @@
 <?php
 
-namespace Symfony\Component\Security\Http\Firewall;
-
-use Symfony\Component\HttpKernel\HttpKernelInterface;
-use Symfony\Component\HttpKernel\Log\LoggerInterface;
-use Symfony\Component\HttpKernel\Event\GetResponseEvent;
-use Symfony\Component\HttpKernel\Event\FilterResponseEvent;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
-use Symfony\Component\Security\Core\Authentication\AuthenticationManagerInterface;
-use Symfony\Component\Security\Core\Exception\AuthenticationException;
-use Symfony\Component\Security\Core\Exception\CookieTheftException;
-use Symfony\Component\Security\Core\SecurityContext;
-use Symfony\Component\Security\Http\RememberMe\RememberMeServicesInterface;
-use Symfony\Component\Security\Http\Event\InteractiveLoginEvent;
-use Symfony\Component\Security\Http\SecurityEvents;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
-
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
+namespace Symfony\Component\Security\Http\Firewall;
+
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\Event\RequestEvent;
+use Symfony\Component\Security\Core\Authentication\AuthenticationManagerInterface;
+use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Http\Event\InteractiveLoginEvent;
+use Symfony\Component\Security\Http\RememberMe\RememberMeServicesInterface;
+use Symfony\Component\Security\Http\SecurityEvents;
+use Symfony\Component\Security\Http\Session\SessionAuthenticationStrategy;
+use Symfony\Component\Security\Http\Session\SessionAuthenticationStrategyInterface;
+use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
+
 /**
- * RememberMeListener implements authentication capabilities via a cookie
+ * RememberMeListener implements authentication capabilities via a cookie.
  *
  * @author Johannes M. Schmitt <schmittjoh@gmail.com>
+ *
+ * @final
  */
-class RememberMeListener implements ListenerInterface
+class RememberMeListener extends AbstractListener
 {
-    private $securityContext;
+    private $tokenStorage;
     private $rememberMeServices;
     private $authenticationManager;
     private $logger;
     private $dispatcher;
+    private $catchExceptions = true;
+    private $sessionStrategy;
 
-    /**
-     * Constructor
-     *
-     * @param SecurityContext                $securityContext
-     * @param RememberMeServicesInterface    $rememberMeServices
-     * @param AuthenticationManagerInterface $authenticationManager
-     * @param LoggerInterface                $logger
-     * @param EventDispatcherInterface       $dispatcher
-     */
-    public function __construct(SecurityContext $securityContext, RememberMeServicesInterface $rememberMeServices, AuthenticationManagerInterface $authenticationManager, LoggerInterface $logger = null, EventDispatcherInterface $dispatcher = null)
+    public function __construct(TokenStorageInterface $tokenStorage, RememberMeServicesInterface $rememberMeServices, AuthenticationManagerInterface $authenticationManager, LoggerInterface $logger = null, EventDispatcherInterface $dispatcher = null, bool $catchExceptions = true, SessionAuthenticationStrategyInterface $sessionStrategy = null)
     {
-        $this->securityContext = $securityContext;
+        $this->tokenStorage = $tokenStorage;
         $this->rememberMeServices = $rememberMeServices;
         $this->authenticationManager = $authenticationManager;
         $this->logger = $logger;
         $this->dispatcher = $dispatcher;
+        $this->catchExceptions = $catchExceptions;
+        $this->sessionStrategy = null === $sessionStrategy ? new SessionAuthenticationStrategy(SessionAuthenticationStrategy::MIGRATE) : $sessionStrategy;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function supports(Request $request): ?bool
+    {
+        return null; // always run authenticate() lazily with lazy firewalls
     }
 
     /**
      * Handles remember-me cookie based authentication.
-     *
-     * @param GetResponseEvent $event A GetResponseEvent instance
      */
-    public function handle(GetResponseEvent $event)
+    public function authenticate(RequestEvent $event)
     {
-        if (null !== $this->securityContext->getToken()) {
+        if (null !== $this->tokenStorage->getToken()) {
             return;
         }
 
         $request = $event->getRequest();
-        if (null === $token = $this->rememberMeServices->autoLogin($request)) {
+        try {
+            if (null === $token = $this->rememberMeServices->autoLogin($request)) {
+                return;
+            }
+        } catch (AuthenticationException $e) {
+            if (null !== $this->logger) {
+                $this->logger->warning(
+                    'The token storage was not populated with remember-me token as the'
+                   .' RememberMeServices was not able to create a token from the remember'
+                   .' me information.', ['exception' => $e]
+                );
+            }
+
+            $this->rememberMeServices->loginFail($request);
+
+            if (!$this->catchExceptions) {
+                throw $e;
+            }
+
             return;
         }
 
         try {
             $token = $this->authenticationManager->authenticate($token);
-            $this->securityContext->setToken($token);
+            if ($request->hasSession() && $request->getSession()->isStarted()) {
+                $this->sessionStrategy->onAuthentication($request, $token);
+            }
+            $this->tokenStorage->setToken($token);
 
             if (null !== $this->dispatcher) {
                 $loginEvent = new InteractiveLoginEvent($request, $token);
-                $this->dispatcher->dispatch(SecurityEvents::INTERACTIVE_LOGIN, $loginEvent);
+                $this->dispatcher->dispatch($loginEvent, SecurityEvents::INTERACTIVE_LOGIN);
             }
 
             if (null !== $this->logger) {
-                $this->logger->debug('SecurityContext populated with remember-me token.');
+                $this->logger->debug('Populated the token storage with a remember-me token.');
             }
-        } catch (AuthenticationException $failed) {
+        } catch (AuthenticationException $e) {
             if (null !== $this->logger) {
-                $this->logger->warn(
-                    'SecurityContext not populated with remember-me token as the'
+                $this->logger->warning(
+                    'The token storage was not populated with remember-me token as the'
                    .' AuthenticationManager rejected the AuthenticationToken returned'
-                   .' by the RememberMeServices: '.$failed->getMessage()
+                   .' by the RememberMeServices.', ['exception' => $e]
                 );
             }
 
-            $this->rememberMeServices->loginFail($request);
+            $this->rememberMeServices->loginFail($request, $e);
+
+            if (!$this->catchExceptions) {
+                throw $e;
+            }
         }
     }
 }

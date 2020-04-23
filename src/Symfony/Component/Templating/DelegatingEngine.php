@@ -15,80 +15,60 @@ namespace Symfony\Component\Templating;
  * DelegatingEngine selects an engine for a given template.
  *
  * @author Fabien Potencier <fabien@symfony.com>
- *
- * @api
  */
-class DelegatingEngine implements EngineInterface
+class DelegatingEngine implements EngineInterface, StreamingEngineInterface
 {
-    protected $engines;
+    /**
+     * @var EngineInterface[]
+     */
+    protected $engines = [];
 
     /**
-     * Constructor.
-     *
-     * @param array $engines An array of EngineInterface instances to add
-     *
-     * @api
+     * @param EngineInterface[] $engines An array of EngineInterface instances to add
      */
-    public function __construct(array $engines = array())
+    public function __construct(array $engines = [])
     {
-        $this->engines = array();
         foreach ($engines as $engine) {
             $this->addEngine($engine);
         }
     }
 
     /**
-     * Renders a template.
-     *
-     * @param mixed $name       A template name or a TemplateReferenceInterface instance
-     * @param array $parameters An array of parameters to pass to the template
-     *
-     * @return string The evaluated template as a string
-     *
-     * @throws \InvalidArgumentException if the template does not exist
-     * @throws \RuntimeException         if the template cannot be rendered
-     *
-     * @api
+     * {@inheritdoc}
      */
-    public function render($name, array $parameters = array())
+    public function render($name, array $parameters = [])
     {
         return $this->getEngine($name)->render($name, $parameters);
     }
 
     /**
-     * Returns true if the template exists.
-     *
-     * @param mixed $name A template name or a TemplateReferenceInterface instance
-     *
-     * @return Boolean true if the template exists, false otherwise
-     *
-     * @api
+     * {@inheritdoc}
+     */
+    public function stream($name, array $parameters = [])
+    {
+        $engine = $this->getEngine($name);
+        if (!$engine instanceof StreamingEngineInterface) {
+            throw new \LogicException(sprintf('Template "%s" cannot be streamed as the engine supporting it does not implement StreamingEngineInterface.', $name));
+        }
+
+        $engine->stream($name, $parameters);
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function exists($name)
     {
         return $this->getEngine($name)->exists($name);
     }
 
-    /**
-     * Adds an engine.
-     *
-     * @param EngineInterface $engine An EngineInterface instance
-     *
-     * @api
-     */
     public function addEngine(EngineInterface $engine)
     {
         $this->engines[] = $engine;
     }
 
     /**
-     * Returns true if this class is able to render the given template.
-     *
-     * @param mixed $name A template name or a TemplateReferenceInterface instance
-     *
-     * @return Boolean true if this class supports the given template, false otherwise
-     *
-     * @api
+     * {@inheritdoc}
      */
     public function supports($name)
     {
@@ -104,15 +84,13 @@ class DelegatingEngine implements EngineInterface
     /**
      * Get an engine able to render the given template.
      *
-     * @param mixed $name A template name or a TemplateReferenceInterface instance
+     * @param string|TemplateReferenceInterface $name A template name or a TemplateReferenceInterface instance
      *
      * @return EngineInterface The engine
      *
      * @throws \RuntimeException if no engine able to work with the template is found
-     *
-     * @api
      */
-    protected function getEngine($name)
+    public function getEngine($name)
     {
         foreach ($this->engines as $engine) {
             if ($engine->supports($name)) {

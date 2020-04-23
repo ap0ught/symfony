@@ -11,21 +11,19 @@
 
 namespace Symfony\Component\Form;
 
-use Symfony\Component\Form\Guess\Guess;
 use Symfony\Component\Form\Exception\UnexpectedTypeException;
+use Symfony\Component\Form\Guess\Guess;
 
 class FormTypeGuesserChain implements FormTypeGuesserInterface
 {
-    private $guessers = array();
+    private $guessers = [];
 
     /**
-     * Constructor.
-     *
-     * @param array $guessers Guessers as instances of FormTypeGuesserInterface
+     * @param FormTypeGuesserInterface[] $guessers
      *
      * @throws UnexpectedTypeException if any guesser does not implement FormTypeGuesserInterface
      */
-    public function __construct(array $guessers)
+    public function __construct(iterable $guessers)
     {
         foreach ($guessers as $guesser) {
             if (!$guesser instanceof FormTypeGuesserInterface) {
@@ -40,46 +38,56 @@ class FormTypeGuesserChain implements FormTypeGuesserInterface
         }
     }
 
-    public function guessType($class, $property)
+    /**
+     * {@inheritdoc}
+     */
+    public function guessType(string $class, string $property)
     {
         return $this->guess(function ($guesser) use ($class, $property) {
             return $guesser->guessType($class, $property);
         });
     }
 
-    public function guessRequired($class, $property)
+    /**
+     * {@inheritdoc}
+     */
+    public function guessRequired(string $class, string $property)
     {
         return $this->guess(function ($guesser) use ($class, $property) {
             return $guesser->guessRequired($class, $property);
         });
     }
 
-    public function guessMaxLength($class, $property)
+    /**
+     * {@inheritdoc}
+     */
+    public function guessMaxLength(string $class, string $property)
     {
         return $this->guess(function ($guesser) use ($class, $property) {
             return $guesser->guessMaxLength($class, $property);
         });
     }
 
-    public function guessMinLength($class, $property)
+    /**
+     * {@inheritdoc}
+     */
+    public function guessPattern(string $class, string $property)
     {
         return $this->guess(function ($guesser) use ($class, $property) {
-            return $guesser->guessMinLength($class, $property);
+            return $guesser->guessPattern($class, $property);
         });
     }
 
     /**
      * Executes a closure for each guesser and returns the best guess from the
-     * return values
+     * return values.
      *
-     * @param  \Closure $closure  The closure to execute. Accepts a guesser
-     *                            as argument and should return a Guess instance
-     *
-     * @return FieldFactoryGuess  The guess with the highest confidence
+     * @param \Closure $closure The closure to execute. Accepts a guesser
+     *                          as argument and should return a Guess instance
      */
-    private function guess(\Closure $closure)
+    private function guess(\Closure $closure): ?Guess
     {
-        $guesses = array();
+        $guesses = [];
 
         foreach ($this->guessers as $guesser) {
             if ($guess = $closure($guesser)) {

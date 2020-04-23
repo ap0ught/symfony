@@ -12,26 +12,28 @@
 namespace Symfony\Bridge\Twig\Extension;
 
 use Symfony\Component\Yaml\Dumper as YamlDumper;
+use Twig\Extension\AbstractExtension;
+use Twig\TwigFilter;
 
 /**
  * Provides integration of the Yaml component with Twig.
  *
  * @author Fabien Potencier <fabien@symfony.com>
  */
-class YamlExtension extends \Twig_Extension
+final class YamlExtension extends AbstractExtension
 {
     /**
      * {@inheritdoc}
      */
-    public function getFilters()
+    public function getFilters(): array
     {
-        return array(
-            'yaml_encode' => new \Twig_Filter_Method($this, 'encode'),
-            'yaml_dump'   => new \Twig_Filter_Method($this, 'dump'),
-        );
+        return [
+            new TwigFilter('yaml_encode', [$this, 'encode']),
+            new TwigFilter('yaml_dump', [$this, 'dump']),
+        ];
     }
 
-    public function encode($input, $inline = 0)
+    public function encode($input, int $inline = 0, int $dumpObjects = 0): string
     {
         static $dumper;
 
@@ -39,29 +41,23 @@ class YamlExtension extends \Twig_Extension
             $dumper = new YamlDumper();
         }
 
-        return $dumper->dump($input, $inline);
+        if (\defined('Symfony\Component\Yaml\Yaml::DUMP_OBJECT')) {
+            return $dumper->dump($input, $inline, 0, $dumpObjects);
+        }
+
+        return $dumper->dump($input, $inline, 0, false, $dumpObjects);
     }
 
-    public function dump($value)
+    public function dump($value, int $inline = 0, int $dumpObjects = 0): string
     {
-        if (is_resource($value)) {
+        if (\is_resource($value)) {
             return '%Resource%';
         }
 
-        if (is_array($value) || is_object($value)) {
-            return '%'.gettype($value).'% '.$this->encode($value);
+        if (\is_array($value) || \is_object($value)) {
+            return '%'.\gettype($value).'% '.$this->encode($value, $inline, $dumpObjects);
         }
 
-        return $value;
-    }
-
-    /**
-     * Returns the name of the extension.
-     *
-     * @return string The extension name
-     */
-    public function getName()
-    {
-        return 'yaml';
+        return $this->encode($value, $inline, $dumpObjects);
     }
 }

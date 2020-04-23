@@ -11,15 +11,15 @@
 
 namespace Symfony\Component\Security\Core\Authentication\Provider;
 
-use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
+use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
 use Symfony\Component\Security\Core\Encoder\EncoderFactoryInterface;
-use Symfony\Component\Security\Core\User\UserProviderInterface;
-use Symfony\Component\Security\Core\User\UserCheckerInterface;
-use Symfony\Component\Security\Core\User\UserInterface;
-use Symfony\Component\Security\Core\Exception\UsernameNotFoundException;
 use Symfony\Component\Security\Core\Exception\AuthenticationServiceException;
 use Symfony\Component\Security\Core\Exception\BadCredentialsException;
-use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
+use Symfony\Component\Security\Core\Exception\UsernameNotFoundException;
+use Symfony\Component\Security\Core\User\PasswordUpgraderInterface;
+use Symfony\Component\Security\Core\User\UserCheckerInterface;
+use Symfony\Component\Security\Core\User\UserInterface;
+use Symfony\Component\Security\Core\User\UserProviderInterface;
 
 /**
  * DaoAuthenticationProvider uses a UserProviderInterface to retrieve the user
@@ -32,16 +32,7 @@ class DaoAuthenticationProvider extends UserAuthenticationProvider
     private $encoderFactory;
     private $userProvider;
 
-    /**
-     * Constructor.
-     *
-     * @param UserProviderInterface   $userProvider               An UserProviderInterface instance
-     * @param UserCheckerInterface    $userChecker                An UserCheckerInterface instance
-     * @param string                  $providerKey                The provider key
-     * @param EncoderFactoryInterface $encoderFactory             An EncoderFactoryInterface instance
-     * @param Boolean                 $hideUserNotFoundExceptions Whether to hide user not found exception or not
-     */
-    public function __construct(UserProviderInterface $userProvider, UserCheckerInterface $userChecker, $providerKey, EncoderFactoryInterface $encoderFactory, $hideUserNotFoundExceptions = true)
+    public function __construct(UserProviderInterface $userProvider, UserCheckerInterface $userChecker, string $providerKey, EncoderFactoryInterface $encoderFactory, bool $hideUserNotFoundExceptions = true)
     {
         parent::__construct($userChecker, $providerKey, $hideUserNotFoundExceptions);
 
@@ -60,12 +51,22 @@ class DaoAuthenticationProvider extends UserAuthenticationProvider
                 throw new BadCredentialsException('The credentials were changed from another session.');
             }
         } else {
-            if (!$presentedPassword = $token->getCredentials()) {
+            if ('' === ($presentedPassword = $token->getCredentials())) {
                 throw new BadCredentialsException('The presented password cannot be empty.');
             }
 
-            if (!$this->encoderFactory->getEncoder($user)->isPasswordValid($user->getPassword(), $presentedPassword, $user->getSalt())) {
+            if (null === $user->getPassword()) {
                 throw new BadCredentialsException('The presented password is invalid.');
+            }
+
+            $encoder = $this->encoderFactory->getEncoder($user);
+
+            if (!$encoder->isPasswordValid($user->getPassword(), $presentedPassword, $user->getSalt())) {
+                throw new BadCredentialsException('The presented password is invalid.');
+            }
+
+            if ($this->userProvider instanceof PasswordUpgraderInterface && method_exists($encoder, 'needsRehash') && $encoder->needsRehash($user->getPassword())) {
+                $this->userProvider->upgradePassword($user, $encoder->encodePassword($presentedPassword, $user->getSalt()));
             }
         }
     }
@@ -73,7 +74,7 @@ class DaoAuthenticationProvider extends UserAuthenticationProvider
     /**
      * {@inheritdoc}
      */
-    protected function retrieveUser($username, UsernamePasswordToken $token)
+    protected function retrieveUser(string $username, UsernamePasswordToken $token)
     {
         $user = $token->getUser();
         if ($user instanceof UserInterface) {
@@ -84,14 +85,17 @@ class DaoAuthenticationProvider extends UserAuthenticationProvider
             $user = $this->userProvider->loadUserByUsername($username);
 
             if (!$user instanceof UserInterface) {
-                throw new AuthenticationServiceException('The user provider must return an UserInterface object.');
+                throw new AuthenticationServiceException('The user provider must return a UserInterface object.');
             }
 
             return $user;
-        } catch (UsernameNotFoundException $notFound) {
-            throw $notFound;
-        } catch (\Exception $repositoryProblem) {
-            throw new AuthenticationServiceException($repositoryProblem->getMessage(), $token, 0, $repositoryProblem);
+        } catch (UsernameNotFoundException $e) {
+            $e->setUsername($username);
+            throw $e;
+        } catch (\Exception $e) {
+            $e = new AuthenticationServiceException($e->getMessage(), 0, $e);
+            $e->setToken($token);
+            throw $e;
         }
     }
 }

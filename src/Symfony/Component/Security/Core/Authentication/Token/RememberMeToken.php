@@ -20,21 +20,20 @@ use Symfony\Component\Security\Core\User\UserInterface;
  */
 class RememberMeToken extends AbstractToken
 {
-    private $key;
+    private $secret;
     private $providerKey;
 
     /**
-     * Constructor.
+     * @param string $secret A secret used to make sure the token is created by the app and not by a malicious client
      *
-     * @param UserInterface $user
-     * @param string        $providerKey
-     * @param string        $key
+     * @throws \InvalidArgumentException
      */
-    public function __construct(UserInterface $user, $providerKey, $key) {
+    public function __construct(UserInterface $user, string $providerKey, string $secret)
+    {
         parent::__construct($user->getRoles());
 
-        if (empty($key)) {
-            throw new \InvalidArgumentException('$key must not be empty.');
+        if (empty($secret)) {
+            throw new \InvalidArgumentException('$secret must not be empty.');
         }
 
         if (empty($providerKey)) {
@@ -42,31 +41,47 @@ class RememberMeToken extends AbstractToken
         }
 
         $this->providerKey = $providerKey;
-        $this->key = $key;
+        $this->secret = $secret;
 
         $this->setUser($user);
         parent::setAuthenticated(true);
     }
 
-    public function setAuthenticated($authenticated)
+    /**
+     * {@inheritdoc}
+     */
+    public function setAuthenticated(bool $authenticated)
     {
         if ($authenticated) {
-            throw new \RuntimeException('You cannot set this token to authenticated after creation.');
+            throw new \LogicException('You cannot set this token to authenticated after creation.');
         }
 
         parent::setAuthenticated(false);
     }
 
+    /**
+     * Returns the provider secret.
+     *
+     * @return string The provider secret
+     */
     public function getProviderKey()
     {
         return $this->providerKey;
     }
 
-    public function getKey()
+    /**
+     * Returns the secret.
+     *
+     * @return string
+     */
+    public function getSecret()
     {
-        return $this->key;
+        return $this->secret;
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getCredentials()
     {
         return '';
@@ -75,21 +90,17 @@ class RememberMeToken extends AbstractToken
     /**
      * {@inheritdoc}
      */
-    public function serialize()
+    public function __serialize(): array
     {
-        return serialize(array(
-            $this->key,
-            $this->providerKey,
-            parent::serialize(),
-        ));
+        return [$this->secret, $this->providerKey, parent::__serialize()];
     }
 
     /**
      * {@inheritdoc}
      */
-    public function unserialize($serialized)
+    public function __unserialize(array $data): void
     {
-        list($this->key, $this->providerKey, $parentStr) = unserialize($serialized);
-        parent::unserialize($parentStr);
+        [$this->secret, $this->providerKey, $parentData] = $data;
+        parent::__unserialize($parentData);
     }
 }

@@ -1,15 +1,5 @@
 <?php
 
-namespace Symfony\Component\Security\Http\RememberMe;
-
-use Symfony\Component\HttpFoundation\Cookie;
-use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
-use Symfony\Component\Security\Core\Authentication\Token\RememberMeToken;
-use Symfony\Component\Security\Core\Exception\AuthenticationException;
-use Symfony\Component\Security\Core\User\UserInterface;
-
 /*
  * This file is part of the Symfony package.
  *
@@ -18,6 +8,15 @@ use Symfony\Component\Security\Core\User\UserInterface;
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
+
+namespace Symfony\Component\Security\Http\RememberMe;
+
+use Symfony\Component\HttpFoundation\Cookie;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Security\Core\Authentication\Token\TokenInterface;
+use Symfony\Component\Security\Core\Exception\AuthenticationException;
+use Symfony\Component\Security\Core\User\UserInterface;
 
 /**
  * Concrete implementation of the RememberMeServicesInterface providing
@@ -28,11 +27,11 @@ use Symfony\Component\Security\Core\User\UserInterface;
 class TokenBasedRememberMeServices extends AbstractRememberMeServices
 {
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function processAutoLoginCookie(array $cookieParts, Request $request)
     {
-        if (count($cookieParts) !== 4) {
+        if (4 !== \count($cookieParts)) {
             throw new AuthenticationException('The cookie is invalid.');
         }
 
@@ -42,19 +41,19 @@ class TokenBasedRememberMeServices extends AbstractRememberMeServices
         }
         try {
             $user = $this->getUserProvider($class)->loadUserByUsername($username);
-        } catch (\Exception $ex) {
-            if (!$ex instanceof AuthenticationException) {
-                $ex = new AuthenticationException($ex->getMessage(), null, $ex->getCode(), $ex);
+        } catch (\Exception $e) {
+            if (!$e instanceof AuthenticationException) {
+                $e = new AuthenticationException($e->getMessage(), $e->getCode(), $e);
             }
 
-            throw $ex;
+            throw $e;
         }
 
         if (!$user instanceof UserInterface) {
-            throw new \RuntimeException(sprintf('The UserProviderInterface implementation must return an instance of UserInterface, but returned "%s".', get_class($user)));
+            throw new \RuntimeException(sprintf('The UserProviderInterface implementation must return an instance of UserInterface, but returned "%s".', get_debug_type($user)));
         }
 
-        if (true !== $this->compareHashes($hash, $this->generateCookieHash($class, $username, $expires, $user->getPassword()))) {
+        if (true !== hash_equals($this->generateCookieHash($class, $username, $expires, $user->getPassword()), $hash)) {
             throw new AuthenticationException('The cookie\'s hash is invalid.');
         }
 
@@ -66,38 +65,13 @@ class TokenBasedRememberMeServices extends AbstractRememberMeServices
     }
 
     /**
-     * Compares two hashes using a constant-time algorithm to avoid (remote)
-     * timing attacks.
-     *
-     * This is the same implementation as used in the BasePasswordEncoder.
-     *
-     * @param string $hash1 The first hash
-     * @param string $hash2 The second hash
-     *
-     * @return Boolean true if the two hashes are the same, false otherwise
-     */
-    private function compareHashes($hash1, $hash2)
-    {
-        if (strlen($hash1) !== $c = strlen($hash2)) {
-            return false;
-        }
-
-        $result = 0;
-        for ($i = 0; $i < $c; $i++) {
-            $result |= ord($hash1[$i]) ^ ord($hash2[$i]);
-        }
-
-        return 0 === $result;
-    }
-
-    /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
     protected function onLoginSuccess(Request $request, Response $response, TokenInterface $token)
     {
         $user = $token->getUser();
         $expires = time() + $this->options['lifetime'];
-        $value = $this->generateCookieValue(get_class($user), $user->getUsername(), $expires, $user->getPassword());
+        $value = $this->generateCookieValue(\get_class($user), $user->getUsername(), $expires, $user->getPassword());
 
         $response->headers->setCookie(
             new Cookie(
@@ -106,8 +80,10 @@ class TokenBasedRememberMeServices extends AbstractRememberMeServices
                 $expires,
                 $this->options['path'],
                 $this->options['domain'],
-                $this->options['secure'],
-                $this->options['httponly']
+                $this->options['secure'] ?? $request->isSecure(),
+                $this->options['httponly'],
+                false,
+                $this->options['samesite']
             )
         );
     }
@@ -115,37 +91,33 @@ class TokenBasedRememberMeServices extends AbstractRememberMeServices
     /**
      * Generates the cookie value.
      *
-     * @param string  $class
-     * @param string  $username The username
-     * @param integer $expires  The unixtime when the cookie expires
-     * @param string  $password The encoded password
-     *
-     * @throws \RuntimeException if username contains invalid chars
+     * @param int         $expires  The Unix timestamp when the cookie expires
+     * @param string|null $password The encoded password
      *
      * @return string
      */
-    protected function generateCookieValue($class, $username, $expires, $password)
+    protected function generateCookieValue(string $class, string $username, int $expires, ?string $password)
     {
-        return $this->encodeCookie(array(
+        // $username is encoded because it might contain COOKIE_DELIMITER,
+        // we assume other values don't
+        return $this->encodeCookie([
             $class,
             base64_encode($username),
             $expires,
-            $this->generateCookieHash($class, $username, $expires, $password)
-        ));
+            $this->generateCookieHash($class, $username, $expires, $password),
+        ]);
     }
 
     /**
-     * Generates a hash for the cookie to ensure it is not being tempered with
+     * Generates a hash for the cookie to ensure it is not being tampered with.
      *
-     * @param string $class
-     * @param string $username The username
-     * @param integer $expires The unixtime when the cookie expires
-     * @param string $password The encoded password
-     * @throws \RuntimeException when the private key is empty
+     * @param int         $expires  The Unix timestamp when the cookie expires
+     * @param string|null $password The encoded password
+     *
      * @return string
      */
-    protected function generateCookieHash($class, $username, $expires, $password)
+    protected function generateCookieHash(string $class, string $username, int $expires, ?string $password)
     {
-        return hash('sha256', $class.$username.$expires.$password.$this->getKey());
+        return hash_hmac('sha256', $class.self::COOKIE_DELIMITER.$username.self::COOKIE_DELIMITER.$expires.self::COOKIE_DELIMITER.$password, $this->getSecret());
     }
 }

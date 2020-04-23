@@ -11,6 +11,8 @@
 
 namespace Symfony\Component\Security\Core\Authentication\Token;
 
+use Symfony\Component\Security\Core\User\UserInterface;
+
 /**
  * UsernamePasswordToken implements a username and password token.
  *
@@ -22,16 +24,14 @@ class UsernamePasswordToken extends AbstractToken
     private $providerKey;
 
     /**
-     * Constructor.
-     *
-     * @param string $user        The username (like a nickname, email address, etc.)
-     * @param string $credentials This usually is the password of the user
-     * @param string $providerKey The provider key
-     * @param array  $roles       An array of roles
+     * @param string|\Stringable|UserInterface $user        The username (like a nickname, email address, etc.) or a UserInterface instance
+     * @param mixed                            $credentials
+     * @param string                           $providerKey
+     * @param string[]                         $roles
      *
      * @throws \InvalidArgumentException
      */
-    public function __construct($user, $credentials, $providerKey, array $roles = array())
+    public function __construct($user, $credentials, string $providerKey, array $roles = [])
     {
         parent::__construct($roles);
 
@@ -43,13 +43,13 @@ class UsernamePasswordToken extends AbstractToken
         $this->credentials = $credentials;
         $this->providerKey = $providerKey;
 
-        parent::setAuthenticated(count($roles) > 0);
+        parent::setAuthenticated(\count($roles) > 0);
     }
 
     /**
      * {@inheritdoc}
      */
-    public function setAuthenticated($isAuthenticated)
+    public function setAuthenticated(bool $isAuthenticated)
     {
         if ($isAuthenticated) {
             throw new \LogicException('Cannot set this token to trusted after instantiation.');
@@ -58,11 +58,19 @@ class UsernamePasswordToken extends AbstractToken
         parent::setAuthenticated(false);
     }
 
+    /**
+     * {@inheritdoc}
+     */
     public function getCredentials()
     {
         return $this->credentials;
     }
 
+    /**
+     * Returns the provider key.
+     *
+     * @return string The provider key
+     */
     public function getProviderKey()
     {
         return $this->providerKey;
@@ -78,14 +86,20 @@ class UsernamePasswordToken extends AbstractToken
         $this->credentials = null;
     }
 
-    public function serialize()
+    /**
+     * {@inheritdoc}
+     */
+    public function __serialize(): array
     {
-        return serialize(array($this->credentials, $this->providerKey, parent::serialize()));
+        return [$this->credentials, $this->providerKey, parent::__serialize()];
     }
 
-    public function unserialize($str)
+    /**
+     * {@inheritdoc}
+     */
+    public function __unserialize(array $data): void
     {
-        list($this->credentials, $this->providerKey, $parentStr) = unserialize($str);
-        parent::unserialize($parentStr);
+        [$this->credentials, $this->providerKey, $parentData] = $data;
+        parent::__unserialize($parentData);
     }
 }

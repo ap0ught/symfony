@@ -1,42 +1,47 @@
 <?php
 
 /*
- * This file is part of the Symfony framework.
+ * This file is part of the Symfony package.
  *
  * (c) Fabien Potencier <fabien@symfony.com>
  *
- * This source file is subject to the MIT license that is bundled
- * with this source code in the file LICENSE.
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
  */
 
 namespace Symfony\Bundle\SecurityBundle\Tests\Functional\Bundle\FormLoginBundle\Controller;
 
-use Symfony\Component\Security\Core\Exception\AccessDeniedException;
+use Symfony\Component\DependencyInjection\ContainerAwareInterface;
+use Symfony\Component\DependencyInjection\ContainerAwareTrait;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\Security\Core\SecurityContext;
-use Symfony\Component\DependencyInjection\ContainerAware;
+use Symfony\Component\Security\Core\Exception\AccessDeniedException;
+use Symfony\Component\Security\Core\Security;
+use Symfony\Component\Security\Core\User\UserInterface;
 
-class LoginController extends ContainerAware
+class LoginController implements ContainerAwareInterface
 {
-    public function loginAction()
+    use ContainerAwareTrait;
+
+    public function loginAction(Request $request, UserInterface $user = null)
     {
         // get the login error if there is one
-        if ($this->container->get('request')->attributes->has(SecurityContext::AUTHENTICATION_ERROR)) {
-            $error = $this->container->get('request')->attributes->get(SecurityContext::AUTHENTICATION_ERROR);
+        if ($request->attributes->has(Security::AUTHENTICATION_ERROR)) {
+            $error = $request->attributes->get(Security::AUTHENTICATION_ERROR);
         } else {
-            $error = $this->container->get('request')->getSession()->get(SecurityContext::AUTHENTICATION_ERROR);
+            $error = $request->getSession()->get(Security::AUTHENTICATION_ERROR);
         }
 
-        return $this->container->get('templating')->renderResponse('FormLoginBundle:Login:login.html.twig', array(
+        return new Response($this->container->get('twig')->render('@FormLogin/Login/login.html.twig', [
             // last username entered by the user
-            'last_username' => $this->container->get('request')->getSession()->get(SecurityContext::LAST_USERNAME),
-            'error'         => $error,
-        ));
+            'last_username' => $request->getSession()->get(Security::LAST_USERNAME),
+            'error' => $error,
+        ]));
     }
 
-    public function afterLoginAction()
+    public function afterLoginAction(UserInterface $user)
     {
-        return $this->container->get('templating')->renderResponse('FormLoginBundle:Login:after_login.html.twig');
+        return new Response($this->container->get('twig')->render('@FormLogin/Login/after_login.html.twig', ['user' => $user]));
     }
 
     public function loginCheckAction()
